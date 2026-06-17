@@ -1,0 +1,25 @@
+{
+  "name": "church-qr-attendance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Church QR Attendance System — Virgin Mary & St. Bishoy Church",
+  "packageManager": "bun@1.3.14",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "api:dev": "bun --cwd apps/api run dev",
+    "api:start": "bun --cwd apps/api run start",
+    "api:typecheck": "bun --cwd apps/api run typecheck",
+    "db:generate": "bun --cwd apps/api run db:generate",
+    "db:migrate": "bun --cwd apps/api run db:migrate",
+    "db:seed": "bun --cwd apps/api run db:seed",
+    "mobile:start": "bun --cwd apps/mobile run start",
+    "mobile:typecheck": "bun --cwd apps/mobile run typecheck",
+    "typecheck": "bun run api:typecheck && bun run mobile:typecheck"
+  }
+}

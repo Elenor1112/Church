@@ -1,0 +1,15 @@
+# Railway / Nixpacks build for the Hono API.
+# Migrations run on deploy; the server then starts.
+providers = ["node"]
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "bun"]
+
+[phases.install]
+cmds = ["bun install"]
+
+[phases.build]
+cmds = ["bun --cwd apps/api run db:migrate"]
+
+[start]
+cmd = "bun --cwd apps/api run start"

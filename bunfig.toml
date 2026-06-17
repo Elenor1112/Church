@@ -1,0 +1,4 @@
+# Use a hoisted node_modules layout so Babel/Metro can resolve transitive
+# plugins (e.g. @babel/plugin-transform-react-jsx) the way they expect.
+[install]
+linker = "hoisted"
