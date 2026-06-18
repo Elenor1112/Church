@@ -20,6 +20,7 @@
     "db:seed": "bun --cwd apps/api run db:seed",
     "mobile:start": "bun --cwd apps/mobile run start",
     "mobile:typecheck": "bun --cwd apps/mobile run typecheck",
-    "typecheck": "bun run api:typecheck && bun run mobile:typecheck"
+    "typecheck": "bun run api:typecheck && bun run mobile:typecheck",
+    "postinstall": "node scripts/patch-css-interop.js"
   }
 }
