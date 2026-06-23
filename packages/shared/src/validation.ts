@@ -5,6 +5,7 @@ import {
   ADMIN_PERMISSIONS,
   CATEGORY_SLUGS,
   NOTIFICATION_TYPES,
+  ALERT_AUDIENCES,
 } from "./constants";
 
 /** E.164-ish / local phone: digits, optional leading +, 7–15 chars. */
@@ -98,7 +99,8 @@ export type CreateAnnouncementInput = z.infer<typeof createAnnouncementSchema>;
 export const createAlertSchema = z.object({
   title: z.string().trim().min(1).max(160),
   message: z.string().trim().min(1).max(4000),
-  memberIds: z.array(z.string().uuid()).optional(),
+  /** Recipient audience; resolved to concrete members server-side. */
+  audience: z.enum(ALERT_AUDIENCES).default("all"),
 });
 export type CreateAlertInput = z.infer<typeof createAlertSchema>;
 

@@ -14,7 +14,7 @@ interface Props extends TextInputProps {
 }
 
 export const Input = forwardRef<TextInput, Props>(function Input(
-  { label, error, secure, icon, style, ...rest },
+  { label, error, secure, icon, style, multiline, ...rest },
   ref,
 ) {
   const { colors } = useTheme();
@@ -32,26 +32,32 @@ export const Input = forwardRef<TextInput, Props>(function Input(
       <View
         style={{
           flexDirection: isRTL ? "row-reverse" : "row",
-          alignItems: "center",
+          // Multiline grows downward, so anchor the row to the top to keep
+          // the field inside its container (and away from the label above).
+          alignItems: multiline ? "flex-start" : "center",
           gap: 10,
           backgroundColor: colors.card,
           borderRadius: radius.sm,
           borderWidth: 1.5,
           borderColor: error ? colors.error : focused ? colors.primary : colors.border,
           paddingHorizontal: 14,
-          height: 52,
+          paddingVertical: multiline ? 12 : 0,
+          minHeight: 52,
         }}
       >
         {icon ? <Ionicons name={icon} size={20} color={colors.muted} /> : null}
         <TextInput
           ref={ref}
+          multiline={multiline}
           style={[
             {
               flex: 1,
               color: colors.ink,
               fontSize: 16,
               textAlign: isRTL ? "right" : "left",
-              height: "100%",
+              // Single-line fills the fixed-height row; multiline sizes itself
+              // from the caller's style (height/minHeight) instead.
+              height: multiline ? undefined : "100%",
             },
             style,
           ]}

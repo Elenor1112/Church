@@ -5,6 +5,7 @@ import { MemberDirectory } from "@/features/MemberDirectory";
 
 export default function AdminMembers() {
   const { t } = useI18n();
+  console.log("[DIAG-SCREEN] AdminMembers screen RENDERED");
   return (
     <Screen>
       <Text variant="title">{t("members")}</Text>

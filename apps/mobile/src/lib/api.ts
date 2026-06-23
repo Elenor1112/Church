@@ -28,6 +28,13 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Hard cap on every request. Without this, a fetch to an unreachable API
+ * (wrong LAN IP, server down, firewall) hangs indefinitely — which surfaces as
+ * a spinner that never resolves. We'd rather fail fast with a clear message.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, auth = true, signal } = opts;
   const headers: Record<string, string> = {};
@@ -37,25 +44,47 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
 
+  const sentToken = auth && headers["Authorization"] !== undefined;
+
+  // Abort the request if it neither resolves nor rejects within the timeout.
+  // If the caller passed their own signal, honour it too.
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+  if (signal) {
+    if (signal.aborted) timeoutController.abort();
+    else signal.addEventListener("abort", () => timeoutController.abort(), { once: true });
+  }
+
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal,
+      signal: timeoutController.signal,
     });
   } catch {
-    throw new ApiError(0, "Network error — check your connection");
-  }
-
-  if (res.status === 401) {
-    onUnauthorized();
-    throw new ApiError(401, "Session expired. Please sign in again.");
+    const timedOut = timeoutController.signal.aborted && !signal?.aborted;
+    throw new ApiError(
+      0,
+      timedOut
+        ? `Couldn't reach the server at ${API_URL}. Check that the API is running and reachable.`
+        : "Network error — check your connection",
+    );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const payload = isJson ? await res.json().catch(() => null) : await res.text();
+
+  // A 401 only means "session expired" when we actually sent a token and the
+  // server rejected it. A 401 on an unauthenticated request (e.g. login) is a
+  // credentials error — surface the server's message and do NOT sign out.
+  if (res.status === 401 && sentToken) {
+    onUnauthorized();
+    throw new ApiError(401, "Session expired. Please sign in again.");
+  }
 
   if (!res.ok) {
     const message =

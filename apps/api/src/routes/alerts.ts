@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index";
-import { alerts, readReceipts, users } from "../db/schema";
+import { alerts, notifications, readReceipts, users } from "../db/schema";
 import { createAlertSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
 import { requireAuth, requirePermission } from "../middleware/auth";
+import { resolveAudienceMemberIds } from "../services/absences";
 import type { AppEnv } from "../lib/context";
 import type { AlertItem } from "@church/shared";
 
@@ -54,15 +55,34 @@ alertRoutes.post("/:id/read", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Send a new alert (broadcast or targeted). */
+/**
+ * Send a new alert to a chosen audience (all members / absent 2 / absent 6).
+ * Recipients are resolved dynamically from the database; each gets a personal
+ * notification while the alert row remains the canonical record for receipts.
+ */
 alertRoutes.post("/", requirePermission("can_send_messages"), async (c) => {
   const user = c.get("user");
   const body = await parseBody(c, createAlertSchema);
+
+  const recipientIds = await resolveAudienceMemberIds(body.audience);
+
   const [created] = await db
     .insert(alerts)
     .values({ title: body.title, message: body.message, createdBy: user.id })
     .returning();
-  return c.json({ alert: created }, 201);
+
+  if (created && recipientIds.length > 0) {
+    await db.insert(notifications).values(
+      recipientIds.map((memberId) => ({
+        userId: memberId,
+        title: body.title,
+        message: body.message,
+        type: "alert" as const,
+      })),
+    );
+  }
+
+  return c.json({ alert: created, recipientCount: recipientIds.length }, 201);
 });
 
 /** Read receipts for an alert (admin view). */

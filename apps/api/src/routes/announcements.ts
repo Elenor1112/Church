@@ -5,6 +5,7 @@ import { announcements, notifications, users } from "../db/schema";
 import { createAnnouncementSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
 import { requireAuth, requirePermission } from "../middleware/auth";
+import { resolveAudienceMemberIds } from "../services/absences";
 import type { AppEnv } from "../lib/context";
 import type { Announcement } from "@church/shared";
 
@@ -48,15 +49,14 @@ announcementRoutes.post("/", requirePermission("can_send_messages"), async (c) =
     .values({ title: body.title, body: body.body, createdBy: user.id })
     .returning();
 
-  // Fan out a notification to all approved members.
-  const members = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.status, "approved"));
-  if (members.length > 0) {
+  // Fan out a notification to every approved member. Reuses the same audience
+  // resolver as alerts so both paths target an identical recipient set
+  // (role = member, status = approved) — no duplicated targeting logic.
+  const recipientIds = await resolveAudienceMemberIds("all");
+  if (recipientIds.length > 0) {
     await db.insert(notifications).values(
-      members.map((m) => ({
-        userId: m.id,
+      recipientIds.map((memberId) => ({
+        userId: memberId,
         title: body.title,
         message: body.body,
         type: "announcement" as const,

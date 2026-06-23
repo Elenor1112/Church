@@ -12,6 +12,9 @@ import type {
   AlertItem,
   BirthdayItem,
   AbsenceItem,
+  AbsentMember,
+  AlertAudienceCounts,
+  AlertAudience,
   DashboardStats,
   CategorySlug,
   Role,
@@ -121,8 +124,13 @@ export function useMarkAlertRead() {
 export function useSendAlert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title: string; message: string }) => api.post("/api/alerts", input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
+    mutationFn: (input: { title: string; message: string; audience: AlertAudience }) =>
+      api.post<{ recipientCount: number }>("/api/alerts", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["unread-count"] });
+    },
   });
 }
 
@@ -141,6 +149,9 @@ export function useSendAnnouncement() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["announcements"] });
       qc.invalidateQueries({ queryKey: ["member-home"] });
+      // Publishing an announcement fans out notifications, so refresh those too.
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["unread-count"] });
     },
   });
 }
@@ -187,7 +198,7 @@ export function useTodayCount() {
   });
 }
 
-export function useAttendance(range: "today" | "week", q: string) {
+export function useAttendance(range: "today" | "month", q: string) {
   return useQuery({
     queryKey: ["attendance", range, q],
     queryFn: () =>
@@ -222,7 +233,9 @@ export function useUsers(filters: {
   q: string;
 }) {
   return useQuery({
-    queryKey: ["users", filters],
+    // Spread into the key so it's compared by value, not by object identity —
+    // a fresh `filters` object each render must not look like a new query.
+    queryKey: ["users", filters.role, filters.status, filters.q],
     queryFn: () =>
       api.get<{ users: PublicUser[] }>(
         `/api/users?role=${filters.role}&status=${filters.status}&q=${encodeURIComponent(filters.q)}`,
@@ -296,6 +309,30 @@ export function useAbsences() {
   return useQuery({
     queryKey: ["absences"],
     queryFn: () => api.get<{ absences: AbsenceItem[] }>("/api/comms/absences"),
+  });
+}
+
+/** Members absent >= 2 Fridays — derived live from attendance records. */
+export function useAbsentMembers() {
+  return useQuery({
+    queryKey: ["absent-members"],
+    queryFn: () => api.get<{ members: AbsentMember[] }>("/api/comms/absent-members"),
+  });
+}
+
+/** Members absent >= 6 Fridays (Paused) — derived live from attendance records. */
+export function usePausedMembers() {
+  return useQuery({
+    queryKey: ["paused-members"],
+    queryFn: () => api.get<{ members: AbsentMember[] }>("/api/comms/paused-members"),
+  });
+}
+
+/** Live recipient counts per alert audience. */
+export function useAlertCounts() {
+  return useQuery({
+    queryKey: ["alert-counts"],
+    queryFn: () => api.get<{ counts: AlertAudienceCounts }>("/api/comms/alert-counts"),
   });
 }
 

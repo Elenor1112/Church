@@ -1,39 +1,30 @@
 import { Hono } from "hono";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db/index";
 import { absences, users } from "../db/schema";
 import { createAbsenceSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
 import { requireAuth, requirePermission } from "../middleware/auth";
+import {
+  getAbsentMembers,
+  getPausedMembers,
+  getAlertAudienceCounts,
+} from "../services/absences";
+import { getRecentBirthdays } from "../services/birthdays";
 import type { AppEnv } from "../lib/context";
-import type { BirthdayItem, AbsenceItem } from "@church/shared";
+import type { AbsenceItem } from "@church/shared";
 
 export const commsRoutes = new Hono<AppEnv>();
 
 commsRoutes.use("*", requireAuth);
 
-/** Birthdays — virtual query derived from the birthday column, sorted by month/day. */
+/**
+ * Birthdays in the last 7 days — derived live from the `users.birthday` column,
+ * year-agnostic and filtered/sorted in PostgreSQL. See services/birthdays.ts.
+ */
 commsRoutes.get("/birthdays", requirePermission("can_send_messages"), async (c) => {
-  const rows = await db
-    .select({
-      id: users.id,
-      firstName: users.firstName,
-      lastName: users.lastName,
-      phone: users.phone,
-      birthday: users.birthday,
-    })
-    .from(users)
-    .where(eq(users.status, "approved"))
-    .orderBy(sql`to_char(${users.birthday}, 'MM-DD')`);
-
-  const items: BirthdayItem[] = rows.map((r) => ({
-    id: r.id,
-    name: `${r.firstName} ${r.lastName}`,
-    phone: r.phone,
-    birthday: r.birthday,
-    monthDay: r.birthday.slice(5), // MM-DD
-  }));
-  return c.json({ birthdays: items });
+  const birthdays = await getRecentBirthdays();
+  return c.json({ birthdays });
 });
 
 commsRoutes.get("/absences", requirePermission("can_send_messages"), async (c) => {
@@ -69,4 +60,28 @@ commsRoutes.post("/absences", requirePermission("can_send_messages"), async (c) 
     .values({ memberId: body.memberId, date: body.date, reason: body.reason ?? null })
     .returning();
   return c.json({ absence: created }, 201);
+});
+
+/**
+ * Members absent >= 2 Fridays — derived live from attendance records.
+ * Powers the Communications → Absences section.
+ */
+commsRoutes.get("/absent-members", requirePermission("can_send_messages"), async (c) => {
+  const members = await getAbsentMembers();
+  return c.json({ members });
+});
+
+/**
+ * Members absent >= 6 Fridays (Paused) — derived live from attendance records.
+ * Powers the Communications → Paused Members section.
+ */
+commsRoutes.get("/paused-members", requirePermission("can_send_messages"), async (c) => {
+  const members = await getPausedMembers();
+  return c.json({ members });
+});
+
+/** Live recipient counts per alert audience (All / Absent 2 / Absent 6). */
+commsRoutes.get("/alert-counts", requirePermission("can_send_messages"), async (c) => {
+  const counts = await getAlertAudienceCounts();
+  return c.json({ counts });
 });

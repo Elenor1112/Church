@@ -8,6 +8,7 @@ import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import { ThemeProvider, useTheme } from "@/theme/ThemeProvider";
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { OverlayProvider, OverlayHost } from "@/components/overlay";
 import { queryClient } from "@/lib/queryClient";
 import { useAuthStore } from "@/store/authStore";
 
@@ -49,7 +50,12 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider>
             <I18nProvider>
-              <RootNavigator />
+              <OverlayProvider>
+                <RootNavigator />
+                {/* Mounted once, AFTER the navigator, so overlays paint above
+                    every screen and the floating tab bar. No native <Modal>. */}
+                <OverlayHost />
+              </OverlayProvider>
             </I18nProvider>
           </ThemeProvider>
         </QueryClientProvider>

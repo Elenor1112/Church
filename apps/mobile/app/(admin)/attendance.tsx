@@ -26,7 +26,7 @@ export default function Attendance() {
   const { t } = useI18n();
   const perms = usePermissions();
   const token = useAuthStore((s) => s.token);
-  const [range, setRange] = useState<"today" | "week">("today");
+  const [range, setRange] = useState<"today" | "month">("today");
   const [q, setQ] = useState("");
   const { data, isLoading, isError, refetch, isRefetching } = useAttendance(range, q);
 
@@ -52,7 +52,7 @@ export default function Attendance() {
 
       {/* Range segmented control */}
       <View style={{ flexDirection: "row", backgroundColor: colors.cardAlt, borderRadius: radius.pill, padding: 4 }}>
-        {(["today", "week"] as const).map((r) => {
+        {(["today", "month"] as const).map((r) => {
           const active = range === r;
           return (
             <Pressable
@@ -61,7 +61,7 @@ export default function Attendance() {
               style={{ flex: 1, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: active ? colors.card : "transparent", alignItems: "center" }}
             >
               <Text weight="600" tone={active ? "primary" : "muted"}>
-                {r === "today" ? t("today") : t("thisWeek")}
+                {r === "today" ? t("today") : t("thisMonth")}
               </Text>
             </Pressable>
           );

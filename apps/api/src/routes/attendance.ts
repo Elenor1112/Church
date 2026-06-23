@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { attendance, fridayCategories, users } from "../db/schema";
 import { scanSchema, claimSetRewardSchema } from "@church/shared";
@@ -11,7 +11,7 @@ import {
   getSetProgress,
   AttendanceError,
 } from "../services/attendance";
-import { isoDate, isoWeek } from "../lib/dates";
+import { isoDate } from "../lib/dates";
 import type { AppEnv } from "../lib/context";
 import type { AttendanceRecord } from "@church/shared";
 
@@ -55,16 +55,18 @@ attendanceRoutes.get("/today/count", requirePermission("can_scan"), async (c) =>
   return c.json({ count: row?.count ?? 0 });
 });
 
-/** List attendance: ?range=today|week, optional ?q=search. */
+/** List attendance: ?range=today|month, optional ?q=search. */
 attendanceRoutes.get("/", requirePermission("can_view_logs"), async (c) => {
   const range = c.req.query("range") ?? "today";
   const q = c.req.query("q")?.trim().toLowerCase();
 
   const now = new Date();
   const conditions = [];
-  if (range === "week") {
-    const { week, year } = isoWeek(now);
-    conditions.push(and(eq(attendance.weekNumber, week), eq(attendance.yearNumber, year)));
+  if (range === "month") {
+    // Current calendar month, by attendance date.
+    conditions.push(
+      sql`date_trunc('month', ${attendance.attendanceDate}) = date_trunc('month', CURRENT_DATE)`,
+    );
   } else {
     conditions.push(eq(attendance.attendanceDate, isoDate(now)));
   }

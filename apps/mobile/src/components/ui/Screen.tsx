@@ -25,7 +25,7 @@ export function Screen({
   const padding = {
     paddingTop: insets.top + 8,
     paddingHorizontal: padded ? 16 : 0,
-    paddingBottom: 32,
+    paddingBottom: insets.bottom + 80,
   };
 
   if (!scroll) {
@@ -40,6 +40,7 @@ export function Screen({
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={[padding, { gap: 16 }, contentContainerStyle]}
+      keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
       refreshControl={
         onRefresh ? (

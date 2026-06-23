@@ -31,6 +31,25 @@ export const CATEGORY_SLUGS = FRIDAY_CATEGORIES.map((c) => c.slug) as [
 /** Number of distinct categories required to complete one "set". */
 export const SET_SIZE = FRIDAY_CATEGORIES.length;
 
+/**
+ * Absence thresholds (counted as missed Friday meetings, derived from real
+ * attendance records). A member appears in the "Absences" section once they
+ * reach ABSENCE_ALERT_THRESHOLD missed Fridays, and becomes "Paused" at
+ * PAUSE_THRESHOLD missed Fridays.
+ */
+export const ABSENCE_ALERT_THRESHOLD = 2;
+export const PAUSE_THRESHOLD = 6;
+
+/**
+ * The Birthdays section shows members whose birthday fell within this many
+ * calendar days up to and including today (7 = today + the 6 preceding days).
+ */
+export const BIRTHDAY_WINDOW_DAYS = 7;
+
+/** Audiences an admin can target when sending an alert. */
+export const ALERT_AUDIENCES = ["all", "absent_2", "absent_6"] as const;
+export type AlertAudience = (typeof ALERT_AUDIENCES)[number];
+
 export const NOTIFICATION_TYPES = [
   "approval",
   "rejection",

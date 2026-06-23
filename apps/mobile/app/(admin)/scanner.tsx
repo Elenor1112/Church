@@ -1,15 +1,13 @@
 import React, { useCallback, useRef, useState } from "react";
-import { View, Pressable, Modal, ScrollView } from "react-native";
+import { View, Pressable, ScrollView } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
-  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
-  withSequence,
   withTiming,
 } from "react-native-reanimated";
 import { useFocusEffect } from "expo-router";
@@ -18,7 +16,8 @@ import { useI18n } from "@/i18n/I18nProvider";
 import { useCategories, useScan, useTodayCount, usePendingCount, type ScanResponse } from "@/features/hooks";
 import { useAttendanceStore } from "@/store/uiStores";
 import { ApiError } from "@/lib/api";
-import { Text, Button, Avatar, Card } from "@/components/ui";
+import { Text, Button, Avatar } from "@/components/ui";
+import { AppDialog, useControlledOverlay } from "@/components/overlay";
 import { radius } from "@/theme/tokens";
 
 export default function Scanner() {
@@ -77,6 +76,14 @@ export default function Scanner() {
     lockRef.current = false;
     setActive(true);
   };
+
+  // Scan-result dialog rendered by the global OverlayHost (no native <Modal>).
+  // Closing the overlay (button, backdrop, or back) re-arms the scanner.
+  useControlledOverlay(
+    !!result,
+    ({ close }) => <ScanResultContent result={result} loading={scan.isPending} onClose={close} />,
+    { variant: "dialog", onClose: reset },
+  );
 
   if (!permission) return <View style={{ flex: 1, backgroundColor: "#000" }} />;
 
@@ -147,12 +154,6 @@ export default function Scanner() {
         ) : null}
       </View>
 
-      <ScanResultModal
-        visible={!!result}
-        result={result}
-        loading={scan.isPending}
-        onClose={reset}
-      />
     </View>
   );
 }
@@ -209,57 +210,61 @@ function ScanFrame() {
   );
 }
 
-function ScanResultModal({
-  visible,
+function ScanResultContent({
   result,
   loading,
   onClose,
 }: {
-  visible: boolean;
   result: { data?: ScanResponse; error?: string } | null;
   loading: boolean;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
   const { t } = useI18n();
-  const data = result?.data;
-  const isError = !!result?.error;
+
+  // `result` goes null while the overlay plays its exit animation; hold the last
+  // value so the card doesn't blank out mid-close.
+  const lastResult = React.useRef(result);
+  if (result) lastResult.current = result;
+  const shown = result ?? lastResult.current;
+
+  const data = shown?.data;
+  const isError = !!shown?.error;
   const already = data?.alreadyCheckedInToday;
   const setDone = data?.setCompleted;
 
+  // Centered dialog rendered by the OverlayHost (no native <Modal>).
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }}>
-        <Animated.View entering={FadeIn.duration(200)}>
-          <Card style={{ alignItems: "center", gap: 16, paddingVertical: 28 }}>
-            {isError ? (
-              <>
-                <Ionicons name="close-circle" size={72} color={colors.error} />
-                <Text variant="heading" center>{result?.error}</Text>
-              </>
-            ) : data ? (
-              <>
-                <Avatar name={data.member.name} uri={data.member.profileImage} size={72} />
-                <Ionicons
-                  name={already ? "time" : "checkmark-circle"}
-                  size={48}
-                  color={already ? colors.warning : colors.success}
-                />
-                <Text variant="title" center>{data.member.name}</Text>
-                <Text tone={already ? "muted" : "success"} weight="600" center>
-                  {already ? t("alreadyToday") : t("checkedIn")}
-                </Text>
-                {setDone ? (
-                  <View style={{ backgroundColor: colors.gold + "22", borderRadius: radius.md, padding: 12, width: "100%" }}>
-                    <Text tone="gold" weight="700" center>{t("setComplete")}</Text>
-                  </View>
-                ) : null}
-              </>
+    <AppDialog onClose={onClose}>
+      <View style={{ alignItems: "center", gap: 16 }}>
+        {isError ? (
+          <>
+            <Ionicons name="close-circle" size={72} color={colors.error} />
+            <Text variant="heading" center>{shown?.error}</Text>
+          </>
+        ) : data ? (
+          <>
+            <Avatar name={data.member.name} uri={data.member.profileImage} size={72} />
+            <Ionicons
+              name={already ? "time" : "checkmark-circle"}
+              size={48}
+              color={already ? colors.warning : colors.success}
+            />
+            <Text variant="title" center>{data.member.name}</Text>
+            <Text tone={already ? "muted" : "success"} weight="600" center>
+              {already ? t("alreadyToday") : t("checkedIn")}
+            </Text>
+            {setDone ? (
+              <View style={{ backgroundColor: colors.gold + "22", borderRadius: radius.md, padding: 12, width: "100%" }}>
+                <Text tone="gold" weight="700" center>{t("setComplete")}</Text>
+              </View>
             ) : null}
-            <Button title="Scan Next" onPress={onClose} loading={loading} />
-          </Card>
-        </Animated.View>
+          </>
+        ) : null}
+        <View style={{ alignSelf: "stretch" }}>
+          <Button title="Scan Next" onPress={onClose} loading={loading} />
+        </View>
       </View>
-    </Modal>
+    </AppDialog>
   );
 }

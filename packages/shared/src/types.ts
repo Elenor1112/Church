@@ -93,8 +93,14 @@ export interface BirthdayItem {
   id: string;
   name: string;
   phone: string;
-  birthday: string;
+  birthday: string; // YYYY-MM-DD (original stored date, including birth year)
   monthDay: string; // MM-DD
+  /** Whole-day offset from today (0 = today … 6 = six days ago). */
+  daysAgo: number;
+  /** Age the member turned on this birthday, derived from the stored year. */
+  age: number;
+  /** Current group/class label (first completed category), if any. */
+  group: string | null;
 }
 
 export interface AbsenceItem {
@@ -103,6 +109,28 @@ export interface AbsenceItem {
   memberName: string;
   date: string;
   reason: string | null;
+}
+
+/**
+ * A member surfaced by absence rules — total absences derived from missed
+ * Friday meetings (real attendance records). Used by both the Absences
+ * (>= 2) and Paused (>= 6) sections.
+ */
+export interface AbsentMember {
+  memberId: string;
+  memberName: string;
+  phone: string;
+  /** First completed category label (current group/class), if any. */
+  group: string | null;
+  totalAbsences: number;
+  status: UserStatus;
+}
+
+/** Live recipient counts per alert audience, from database queries. */
+export interface AlertAudienceCounts {
+  all: number;
+  absent_2: number;
+  absent_6: number;
 }
 
 export interface DashboardStats {

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Pressable, Modal } from "react-native";
+import { View, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useForm, Controller } from "react-hook-form";
@@ -7,7 +7,9 @@ import { useTheme } from "@/theme/ThemeProvider";
 import { useI18n } from "@/i18n/I18nProvider";
 import {
   useBirthdays,
-  useAbsences,
+  useAbsentMembers,
+  usePausedMembers,
+  useAlertCounts,
   usePendingSets,
   useClaimReward,
   useSendAlert,
@@ -21,13 +23,14 @@ import {
   Input,
   Avatar,
   Badge,
-  SectionHeader,
   EmptyState,
   SkeletonCard,
 } from "@/components/ui";
+import { AppSheet, useControlledOverlay } from "@/components/overlay";
+import type { AbsentMember, AlertAudience } from "@church/shared";
 import { radius } from "@/theme/tokens";
 
-type Tab = "sets" | "birthdays" | "absences" | "broadcast";
+type Tab = "sets" | "birthdays" | "absences" | "paused" | "broadcast";
 
 export default function Comms() {
   const { colors } = useTheme();
@@ -39,8 +42,17 @@ export default function Comms() {
     { key: "sets", icon: "gift", label: t("setNotifications") },
     { key: "birthdays", icon: "balloon", label: t("birthdays") },
     { key: "absences", icon: "person-remove", label: t("absences") },
+    { key: "paused", icon: "pause-circle", label: t("pausedMembers") },
     { key: "broadcast", icon: "megaphone", label: t("send") },
   ];
+
+  // Compose-sheet driven by the global overlay host (no native <Modal>). The
+  // host renders above the tab bar; closing the overlay clears `composer`.
+  useControlledOverlay(
+    composer != null,
+    ({ close }) => <ComposerForm type={composer} onDone={close} />,
+    { variant: "sheet", onClose: () => setComposer(null) },
+  );
 
   return (
     <Screen>
@@ -75,9 +87,8 @@ export default function Comms() {
       {tab === "sets" && <SetsView />}
       {tab === "birthdays" && <BirthdaysView />}
       {tab === "absences" && <AbsencesView />}
+      {tab === "paused" && <PausedView />}
       {tab === "broadcast" && <BroadcastView onCompose={setComposer} />}
-
-      <ComposerModal type={composer} onClose={() => setComposer(null)} />
     </Screen>
   );
 }
@@ -123,35 +134,84 @@ function BirthdaysView() {
   if (birthdays.isLoading) return <SkeletonCard />;
   const items = birthdays.data?.birthdays ?? [];
   if (items.length === 0) return <EmptyState icon="balloon-outline" title={t("noData")} />;
+
+  // "Today" / "Yesterday" / "N days ago" from the server-computed offset.
+  const recencyLabel = (daysAgo: number) =>
+    daysAgo <= 0 ? t("today") : daysAgo === 1 ? t("yesterday") : `${daysAgo} ${t("daysAgo")}`;
+
+  // Birthday as a localized day/month (year omitted — the cohort is anniversaries).
+  const birthdayLabel = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
+
   return (
     <>
       {items.map((b) => (
         <Card key={b.id} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           <Avatar name={b.name} size={42} />
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, gap: 2 }}>
             <Text weight="600">{b.name}</Text>
             <Text variant="caption" tone="muted">{b.phone}</Text>
+            <Text variant="small" tone="muted">
+              {birthdayLabel(b.birthday)} · {t("age")} {b.age}
+              {b.group ? ` · ${t("group")}: ${b.group}` : ""}
+            </Text>
           </View>
-          <Badge label={b.monthDay} variant="gold" />
+          <Badge label={recencyLabel(b.daysAgo)} variant="gold" />
         </Card>
       ))}
     </>
   );
 }
 
+/** Shared card for an absence-derived member (Absences + Paused sections). */
+function AbsentMemberCard({ member, paused }: { member: AbsentMember; paused?: boolean }) {
+  const { t } = useI18n();
+  return (
+    <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+      <Avatar name={member.memberName} size={42} />
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text weight="600">{member.memberName}</Text>
+        <Text variant="caption" tone="muted">{member.phone}</Text>
+        {member.group ? (
+          <Text variant="small" tone="muted">{t("group")}: {member.group}</Text>
+        ) : null}
+      </View>
+      <View style={{ alignItems: "flex-end", gap: 6 }}>
+        <Badge
+          label={`${member.totalAbsences} · ${t("totalAbsences")}`}
+          variant={paused ? "error" : "warning"}
+        />
+        {paused ? <Badge label={t("paused")} variant="error" /> : null}
+      </View>
+    </Card>
+  );
+}
+
 function AbsencesView() {
   const { t } = useI18n();
-  const absences = useAbsences();
-  if (absences.isLoading) return <SkeletonCard />;
-  const items = absences.data?.absences ?? [];
+  const absences = useAbsentMembers();
+  if (absences.isLoading) return <><SkeletonCard /><SkeletonCard /></>;
+  const items = absences.data?.members ?? [];
   if (items.length === 0) return <EmptyState icon="checkmark-circle-outline" title={t("noData")} />;
   return (
     <>
-      {items.map((a) => (
-        <Card key={a.id} style={{ gap: 4 }}>
-          <Text weight="600">{a.memberName}</Text>
-          <Text variant="caption" tone="muted">{a.date}{a.reason ? ` · ${a.reason}` : ""}</Text>
-        </Card>
+      {items.map((m) => (
+        <AbsentMemberCard key={m.memberId} member={m} />
+      ))}
+    </>
+  );
+}
+
+function PausedView() {
+  const { t } = useI18n();
+  const paused = usePausedMembers();
+  if (paused.isLoading) return <><SkeletonCard /><SkeletonCard /></>;
+  const items = paused.data?.members ?? [];
+  if (items.length === 0) return <EmptyState icon="pause-circle-outline" title={t("noData")} />;
+  return (
+    <>
+      {items.map((m) => (
+        <AbsentMemberCard key={m.memberId} member={m} paused />
       ))}
     </>
   );
@@ -182,39 +242,113 @@ function BroadcastView({ onCompose }: { onCompose: (t: "alert" | "announcement")
   );
 }
 
-function ComposerModal({ type, onClose }: { type: "alert" | "announcement" | null; onClose: () => void }) {
+function ComposerForm({ type, onDone }: { type: "alert" | "announcement" | null; onDone: () => void }) {
   const { colors } = useTheme();
   const { t } = useI18n();
   const sendAlert = useSendAlert();
   const sendAnnouncement = useSendAnnouncement();
+  const counts = useAlertCounts();
+  const [audience, setAudience] = useState<AlertAudience>("all");
   const { control, handleSubmit, reset } = useForm({ defaultValues: { title: "", body: "" } });
+
+  // `type` momentarily goes null while the overlay plays its exit animation;
+  // keep the last real value so the sheet doesn't blank out mid-close.
+  const lastType = React.useRef<"alert" | "announcement">("announcement");
+  if (type) lastType.current = type;
+  const shownType = type ?? lastType.current;
+
+  const close = () => { reset(); setAudience("all"); onDone(); };
+
+  // Surface send failures instead of letting the button spin forever.
+  const onError = (err: unknown) => {
+    const message = err instanceof Error ? err.message : t("somethingWrong");
+    Alert.alert(t("somethingWrong"), message);
+  };
 
   const submit = handleSubmit((values) => {
     if (!values.title || !values.body) return;
-    const done = () => { reset(); onClose(); };
-    if (type === "alert") sendAlert.mutate({ title: values.title, message: values.body }, { onSuccess: done });
-    else sendAnnouncement.mutate({ title: values.title, body: values.body }, { onSuccess: done });
+    if (shownType === "alert")
+      sendAlert.mutate(
+        { title: values.title, message: values.body, audience },
+        { onSuccess: close, onError },
+      );
+    else
+      sendAnnouncement.mutate(
+        { title: values.title, body: values.body },
+        { onSuccess: close, onError },
+      );
   });
 
   const pending = sendAlert.isPending || sendAnnouncement.isPending;
 
+  const audienceOptions: { key: AlertAudience; label: string; count: number | undefined }[] = [
+    { key: "all", label: t("allMembers"), count: counts.data?.counts.all },
+    { key: "absent_2", label: t("absentTwice"), count: counts.data?.counts.absent_2 },
+    { key: "absent_6", label: t("absentSixTimes"), count: counts.data?.counts.absent_6 },
+  ];
+
+  // Rendered inside the global OverlayHost as a bottom sheet — no native
+  // <Modal>, so there's no separate native window and no Fabric re-measure
+  // freeze. AppSheet handles the header/scroll-body/footer layout; the host
+  // handles the backdrop, slide-up animation, and backdrop/back dismissal.
   return (
-    <Modal visible={!!type} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }}>
-        <View style={{ backgroundColor: colors.background, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: 24, gap: 16 }}>
-          <Text variant="heading">{type === "alert" ? t("sendAlert") : t("sendAnnouncement")}</Text>
-          <Controller control={control} name="title" render={({ field }) => (
-            <Input label={t("title")} value={field.value} onChangeText={field.onChange} />
-          )} />
-          <Controller control={control} name="body" render={({ field }) => (
-            <Input label={type === "alert" ? t("message") : t("body")} value={field.value} onChangeText={field.onChange} multiline numberOfLines={4} style={{ height: 100, textAlignVertical: "top" }} />
-          )} />
-          <View style={{ flexDirection: "row", gap: 12 }}>
-            <View style={{ flex: 1 }}><Button title={t("cancel")} variant="outline" onPress={() => { reset(); onClose(); }} /></View>
-            <View style={{ flex: 1 }}><Button title={t("send")} loading={pending} onPress={submit} /></View>
-          </View>
+    <AppSheet
+      title={shownType === "alert" ? t("sendAlert") : t("sendAnnouncement")}
+      onClose={close}
+      footer={
+        <>
+          <View style={{ flex: 1 }}><Button title={t("cancel")} variant="outline" onPress={close} /></View>
+          <View style={{ flex: 1 }}><Button title={t("send")} loading={pending} onPress={submit} /></View>
+        </>
+      }
+    >
+      {shownType === "alert" ? (
+        <View style={{ gap: 8 }}>
+          <Text variant="caption" weight="600" tone="muted">{t("audience")}</Text>
+          {audienceOptions.map((opt) => {
+            const active = audience === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                onPress={() => setAudience(opt.key)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                  backgroundColor: active ? colors.primary + "12" : colors.cardAlt,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <Ionicons
+                    name={active ? "radio-button-on" : "radio-button-off"}
+                    size={18}
+                    color={active ? colors.primary : colors.muted}
+                  />
+                  <Text weight="600" style={{ color: active ? colors.primary : colors.ink }}>
+                    {opt.label}
+                  </Text>
+                </View>
+                <Badge
+                  label={counts.isLoading || opt.count === undefined ? "…" : String(opt.count)}
+                  variant={active ? "info" : "neutral"}
+                />
+              </Pressable>
+            );
+          })}
         </View>
-      </View>
-    </Modal>
+      ) : null}
+
+      <Controller control={control} name="title" render={({ field }) => (
+        <Input label={t("title")} value={field.value} onChangeText={field.onChange} />
+      )} />
+      <Controller control={control} name="body" render={({ field }) => (
+        <Input label={shownType === "alert" ? t("message") : t("body")} value={field.value} onChangeText={field.onChange} multiline numberOfLines={4} style={{ height: 100, textAlignVertical: "top" }} />
+      )} />
+    </AppSheet>
   );
 }

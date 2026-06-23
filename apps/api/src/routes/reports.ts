@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { attendance, users, sets } from "../db/schema";
 import { requireAuth, requirePermission, requireRole } from "../middleware/auth";
-import { isoDate, isoWeek } from "../lib/dates";
+import { isoDate } from "../lib/dates";
 import type { AppEnv } from "../lib/context";
 import type { DashboardStats } from "@church/shared";
 
@@ -11,17 +11,14 @@ export const reportRoutes = new Hono<AppEnv>();
 
 reportRoutes.use("*", requireAuth);
 
-/** CSV export of attendance for a range (?range=today|week). */
+/** CSV export of attendance for a range (?range=today|month). */
 reportRoutes.get("/attendance.csv", requirePermission("can_generate_reports"), async (c) => {
-  const range = c.req.query("range") ?? "week";
+  const range = c.req.query("range") ?? "month";
   const now = new Date();
   const where =
     range === "today"
       ? eq(attendance.attendanceDate, isoDate(now))
-      : (() => {
-          const { week, year } = isoWeek(now);
-          return and(eq(attendance.weekNumber, week), eq(attendance.yearNumber, year));
-        })();
+      : sql`date_trunc('month', ${attendance.attendanceDate}) = date_trunc('month', CURRENT_DATE)`;
 
   const rows = await db
     .select({

@@ -1,11 +1,11 @@
 import React, { useState } from "react";
-import { View, Pressable, Modal } from "react-native";
+import { View, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useForm, Controller } from "react-hook-form";
 import { useTheme } from "@/theme/ThemeProvider";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useUsers, useSetUserStatus, useCreateUser, useCreateAdmin } from "@/features/hooks";
-import { useAuthStore } from "@/store/authStore";
+import { ApiError } from "@/lib/api";
 import {
   Card,
   Text,
@@ -17,6 +17,7 @@ import {
   SkeletonCard,
   PermissionToggle,
 } from "@/components/ui";
+import { AppSheet, useControlledOverlay } from "@/components/overlay";
 import { radius } from "@/theme/tokens";
 import type { PublicUser, Role, UserStatus } from "@church/shared";
 
@@ -33,79 +34,86 @@ export function MemberDirectory({ superAdmin = false }: Props) {
   const [status, setStatus] = useState<"all" | UserStatus>(superAdmin ? "all" : "pending");
   const [creator, setCreator] = useState<"member" | "admin" | null>(null);
 
+  const openCreator = (kind: "member" | "admin") => setCreator(kind);
+
   const { data, isLoading } = useUsers({ role, status, q });
   const setStatusMut = useSetUserStatus();
   const users = data?.users ?? [];
 
+  // Create-user sheet driven by the global overlay host (no native <Modal>).
+  useControlledOverlay(
+    creator != null,
+    ({ close }) => <CreateUserForm kind={creator} onDone={close} />,
+    { variant: "sheet", onClose: () => setCreator(null) },
+  );
+
   return (
-    <View style={{ gap: 12 }}>
-      <Input icon="search" placeholder={t("search")} value={q} onChangeText={setQ} autoCapitalize="none" />
+      <View style={{ gap: 12 }}>
+        <Input icon="search" placeholder={t("search")} value={q} onChangeText={setQ} autoCapitalize="none" />
 
-      {/* Status filter */}
-      <FilterRow
-        value={status}
-        onChange={(v) => setStatus(v as "all" | UserStatus)}
-        options={[
-          { value: "all", label: t("all") },
-          { value: "pending", label: t("pending") },
-          { value: "approved", label: t("approved") },
-          { value: "rejected", label: t("rejected") },
-        ]}
-      />
-
-      {superAdmin ? (
+        {/* Status filter */}
         <FilterRow
-          value={role}
-          onChange={(v) => setRole(v as "all" | Role)}
+          value={status}
+          onChange={(v) => setStatus(v as "all" | UserStatus)}
           options={[
             { value: "all", label: t("all") },
-            { value: "member", label: "Member" },
-            { value: "admin", label: "Admin" },
-            { value: "super_admin", label: "Super" },
+            { value: "pending", label: t("pending") },
+            { value: "approved", label: t("approved") },
+            { value: "rejected", label: t("rejected") },
           ]}
         />
-      ) : null}
 
-      <View style={{ flexDirection: "row", gap: 12 }}>
-        <View style={{ flex: 1 }}>
-          <Button
-            title={t("addMember")}
-            variant="outline"
-            size="sm"
-            leftIcon={<Ionicons name="person-add-outline" size={16} color={colors.primary} />}
-            onPress={() => setCreator("member")}
-          />
-        </View>
         {superAdmin ? (
+          <FilterRow
+            value={role}
+            onChange={(v) => setRole(v as "all" | Role)}
+            options={[
+              { value: "all", label: t("all") },
+              { value: "member", label: "Member" },
+              { value: "admin", label: "Admin" },
+              { value: "super_admin", label: "Super" },
+            ]}
+          />
+        ) : null}
+
+        <View style={{ flexDirection: "row", gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Button
-              title={t("createAdmin")}
+              title={t("addMember")}
+              variant="outline"
               size="sm"
-              leftIcon={<Ionicons name="shield-outline" size={16} color="#fff" />}
-              onPress={() => setCreator("admin")}
+              leftIcon={<Ionicons name="person-add-outline" size={16} color={colors.primary} />}
+              onPress={() => openCreator("member")}
             />
           </View>
-        ) : null}
+          {superAdmin ? (
+            <View style={{ flex: 1 }}>
+              <Button
+                title={t("createAdmin")}
+                size="sm"
+                leftIcon={<Ionicons name="shield-outline" size={16} color="#fff" />}
+                onPress={() => openCreator("admin")}
+              />
+            </View>
+          ) : null}
+        </View>
+
+        {isLoading ? (
+          <><SkeletonCard /><SkeletonCard /></>
+        ) : users.length === 0 ? (
+          <EmptyState icon="people-outline" title={t("noData")} />
+        ) : (
+          users.map((u) => (
+            <MemberRow
+              key={u.id}
+              user={u}
+              superAdmin={superAdmin}
+              busy={setStatusMut.isPending}
+              onStatus={(s) => setStatusMut.mutate({ id: u.id, status: s })}
+            />
+          ))
+        )}
       </View>
-
-      {isLoading ? (
-        <><SkeletonCard /><SkeletonCard /></>
-      ) : users.length === 0 ? (
-        <EmptyState icon="people-outline" title={t("noData")} />
-      ) : (
-        users.map((u) => (
-          <MemberRow
-            key={u.id}
-            user={u}
-            superAdmin={superAdmin}
-            busy={setStatusMut.isPending}
-            onStatus={(s) => setStatusMut.mutate({ id: u.id, status: s })}
-          />
-        ))
-      )}
-
-      <CreateUserModal kind={creator} onClose={() => setCreator(null)} />
-    </View>
   );
 }
 
@@ -217,11 +225,15 @@ function MemberRow({
   );
 }
 
-function CreateUserModal({ kind, onClose }: { kind: "member" | "admin" | null; onClose: () => void }) {
-  const { colors } = useTheme();
+function CreateUserForm({ kind, onDone }: { kind: "member" | "admin" | null; onDone: () => void }) {
   const { t } = useI18n();
   const createUser = useCreateUser();
   const createAdmin = useCreateAdmin();
+  // Keep the last non-null kind so the body still renders correctly while the
+  // overlay plays its exit animation (during which `kind` goes null).
+  const lastKind = React.useRef<"member" | "admin">("member");
+  if (kind) lastKind.current = kind;
+  const shownKind = kind ?? lastKind.current;
   const [perms, setPerms] = useState({
     can_scan: true,
     can_view_logs: true,
@@ -233,9 +245,13 @@ function CreateUserModal({ kind, onClose }: { kind: "member" | "admin" | null; o
     defaultValues: { firstName: "", lastName: "", phone: "", birthday: "", password: "" },
   });
 
+  // The form is mounted fresh each time the overlay opens (and unmounted on
+  // close) by useControlledOverlay, so it always starts clean — no reset effect
+  // needed the way the old persistent <Modal> required.
+
   const submit = handleSubmit((v) => {
-    const done = () => { reset(); onClose(); };
-    if (kind === "admin") {
+    const done = () => { reset(); onDone(); };
+    if (shownKind === "admin") {
       createAdmin.mutate({ ...v, permissions: perms }, { onSuccess: done });
     } else {
       createUser.mutate({ ...v, role: "member", status: "approved" }, { onSuccess: done });
@@ -243,6 +259,9 @@ function CreateUserModal({ kind, onClose }: { kind: "member" | "admin" | null; o
   });
 
   const pending = createUser.isPending || createAdmin.isPending;
+  const mutationError = createUser.error ?? createAdmin.error;
+  const errorMsg =
+    mutationError instanceof ApiError ? mutationError.message : mutationError ? t("somethingWrong") : null;
   const permMeta: { key: keyof typeof perms; icon: "scan" | "list" | "chatbubbles" | "bar-chart"; titleKey: "canScan" | "canViewLogs" | "canSendMessages" | "canGenerateReports" }[] = [
     { key: "can_scan", icon: "scan", titleKey: "canScan" },
     { key: "can_view_logs", icon: "list", titleKey: "canViewLogs" },
@@ -250,39 +269,51 @@ function CreateUserModal({ kind, onClose }: { kind: "member" | "admin" | null; o
     { key: "can_generate_reports", icon: "bar-chart", titleKey: "canGenerateReports" },
   ];
 
+  const close = () => { reset(); onDone(); };
+
+  // Rendered inside the global OverlayHost as a bottom sheet — no native
+  // <Modal>, so there's no separate native window and no Fabric re-measure
+  // freeze. AppSheet owns the header/scroll-body/footer layout and keyboard
+  // handling; the host owns the backdrop, slide-up, and backdrop/back dismissal.
   return (
-    <Modal visible={!!kind} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }}>
-        <View style={{ backgroundColor: colors.background, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: 24, gap: 14, maxHeight: "92%" }}>
-          <Text variant="heading">{kind === "admin" ? t("createAdmin") : t("addMember")}</Text>
-          <Controller control={control} name="firstName" render={({ field }) => (<Input label={t("firstName")} value={field.value} onChangeText={field.onChange} />)} />
-          <Controller control={control} name="lastName" render={({ field }) => (<Input label={t("lastName")} value={field.value} onChangeText={field.onChange} />)} />
-          <Controller control={control} name="phone" render={({ field }) => (<Input label={t("phone")} keyboardType="phone-pad" value={field.value} onChangeText={field.onChange} />)} />
-          <Controller control={control} name="birthday" render={({ field }) => (<Input label={t("birthday")} placeholder="1995-06-17" autoCapitalize="none" value={field.value} onChangeText={field.onChange} />)} />
-          <Controller control={control} name="password" render={({ field }) => (<Input label={t("password")} secure value={field.value} onChangeText={field.onChange} />)} />
+    <AppSheet
+      title={shownKind === "admin" ? t("createAdmin") : t("addMember")}
+      onClose={close}
+      bodyMaxHeightRatio={0.6}
+      footer={
+        <>
+          <View style={{ flex: 1 }}><Button title={t("cancel")} variant="outline" onPress={close} /></View>
+          <View style={{ flex: 1 }}><Button title={t("save")} loading={pending} onPress={submit} /></View>
+        </>
+      }
+    >
+      <Controller control={control} name="firstName" render={({ field }) => (<Input label={t("firstName")} value={field.value} onChangeText={field.onChange} />)} />
+      <Controller control={control} name="lastName" render={({ field }) => (<Input label={t("lastName")} value={field.value} onChangeText={field.onChange} />)} />
+      <Controller control={control} name="phone" render={({ field }) => (<Input label={t("phone")} keyboardType="phone-pad" value={field.value} onChangeText={field.onChange} />)} />
+      <Controller control={control} name="birthday" render={({ field }) => (<Input label={t("birthday")} placeholder="1995-06-17" autoCapitalize="none" value={field.value} onChangeText={field.onChange} />)} />
+      <Controller control={control} name="password" render={({ field }) => (<Input label={t("password")} secure value={field.value} onChangeText={field.onChange} />)} />
 
-          {kind === "admin" ? (
-            <View style={{ gap: 8 }}>
-              <Text weight="600">{t("permissions")}</Text>
-              {permMeta.map((p) => (
-                <PermissionToggle
-                  key={p.key}
-                  icon={p.icon}
-                  title={t(p.titleKey)}
-                  description=""
-                  value={perms[p.key]}
-                  onChange={(val) => setPerms((prev) => ({ ...prev, [p.key]: val }))}
-                />
-              ))}
-            </View>
-          ) : null}
-
-          <View style={{ flexDirection: "row", gap: 12, marginTop: 4 }}>
-            <View style={{ flex: 1 }}><Button title={t("cancel")} variant="outline" onPress={() => { reset(); onClose(); }} /></View>
-            <View style={{ flex: 1 }}><Button title={t("save")} loading={pending} onPress={submit} /></View>
-          </View>
+      {shownKind === "admin" ? (
+        <View style={{ gap: 8 }}>
+          <Text weight="600">{t("permissions")}</Text>
+          {permMeta.map((p) => (
+            <PermissionToggle
+              key={p.key}
+              icon={p.icon}
+              title={t(p.titleKey)}
+              description=""
+              value={perms[p.key]}
+              onChange={(val) => setPerms((prev) => ({ ...prev, [p.key]: val }))}
+            />
+          ))}
         </View>
-      </View>
-    </Modal>
+      ) : null}
+
+      {errorMsg ? (
+        <Text tone="error" center>
+          {errorMsg}
+        </Text>
+      ) : null}
+    </AppSheet>
   );
 }
