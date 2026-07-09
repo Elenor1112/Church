@@ -20,6 +20,7 @@ announcementRoutes.get("/", async (c) => {
       id: announcements.id,
       title: announcements.title,
       body: announcements.body,
+      category: announcements.category,
       createdBy: announcements.createdBy,
       firstName: creator.firstName,
       lastName: creator.lastName,
@@ -34,6 +35,7 @@ announcementRoutes.get("/", async (c) => {
     id: r.id,
     title: r.title,
     body: r.body,
+    category: r.category,
     createdBy: r.createdBy,
     createdByName: r.firstName ? `${r.firstName} ${r.lastName}` : null,
     createdAt: r.createdAt.toISOString(),
@@ -46,7 +48,7 @@ announcementRoutes.post("/", requirePermission("can_send_messages"), async (c) =
   const body = await parseBody(c, createAnnouncementSchema);
   const [created] = await db
     .insert(announcements)
-    .values({ title: body.title, body: body.body, createdBy: user.id })
+    .values({ title: body.title, body: body.body, category: body.category, createdBy: user.id })
     .returning();
 
   // Fan out a notification to every approved member. Reuses the same audience

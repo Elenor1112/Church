@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index";
-import { attendance, announcements, qrCodes, users } from "../db/schema";
+import { attendance, announcements, qrCodes, users, meetings } from "../db/schema";
 import { requireAuth } from "../middleware/auth";
 import { getSetProgress } from "../services/attendance";
 import { newQrToken } from "../lib/crypto";
@@ -52,21 +52,37 @@ memberRoutes.get("/home", async (c) => {
       id: announcements.id,
       title: announcements.title,
       body: announcements.body,
+      category: announcements.category,
       createdAt: announcements.createdAt,
     })
     .from(announcements)
     .orderBy(desc(announcements.createdAt))
-    .limit(5);
+    .limit(30);
+
+  const meetingRows = await db
+    .select()
+    .from(meetings)
+    .orderBy(asc(meetings.dayOfWeek), asc(meetings.startTime));
 
   return c.json({
     greetingName: user.firstName,
     verse: { en: verse.textEn, refEn: verse.refEn, ar: verse.textAr, refAr: verse.refAr },
     meeting: {
-      titleEn: "Family Meeting",
-      titleAr: "اجتماع العائلة",
+      titleEn: "Holy Family Meeting",
+      titleAr: " اجتماع العائلةالمقدسة",
       day: "Friday",
-      time: "7:00 PM",
+      time: "10:30 AM",
     },
+    meetings: meetingRows.map((m) => ({
+      id: m.id,
+      name: m.name,
+      meetingDate: m.meetingDate,
+      dayOfWeek: m.dayOfWeek,
+      startTime: m.startTime,
+      endTime: m.endTime,
+      createdBy: m.createdBy,
+      createdAt: m.createdAt.toISOString(),
+    })),
     attendanceCount: attCount?.count ?? 0,
     completedSets: user.completedSets,
     progress,
@@ -74,6 +90,7 @@ memberRoutes.get("/home", async (c) => {
       id: a.id,
       title: a.title,
       body: a.body,
+      category: a.category,
       createdAt: a.createdAt.toISOString(),
     })),
   });

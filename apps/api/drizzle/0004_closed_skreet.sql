@@ -1,0 +1,2 @@
+CREATE TYPE "public"."area" AS ENUM('first_settlement', 'third_settlement', 'fifth_settlement', 'sixth_settlement');--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "area" "area" DEFAULT 'first_settlement' NOT NULL;

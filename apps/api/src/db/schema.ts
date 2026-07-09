@@ -20,6 +20,18 @@ export const categorySlugEnum = pgEnum("category_slug", [
   "bible",
   "spirituality",
   "saints_lives",
+  "free",
+]);
+export const announcementCategoryEnum = pgEnum("announcement_category", [
+  "trips",
+  "occasions",
+  "custom",
+]);
+export const areaEnum = pgEnum("area", [
+  "first_settlement",
+  "third_settlement",
+  "fifth_settlement",
+  "sixth_settlement",
 ]);
 export const notificationTypeEnum = pgEnum("notification_type", [
   "approval",
@@ -41,6 +53,8 @@ export const users = pgTable(
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
     phone: varchar("phone", { length: 20 }).notNull().unique(),
+    area: areaEnum("area").notNull().default("first_settlement"),
+    addressDetails: varchar("address_details", { length: 200 }).notNull().default(""),
     birthday: date("birthday").notNull(),
     spousePhone: varchar("spouse_phone", { length: 20 }),
     email: varchar("email", { length: 255 }),
@@ -69,6 +83,7 @@ export const adminPermissions = pgTable("admin_permissions", {
     .unique()
     .references(() => users.id, { onDelete: "cascade" }),
   canScan: boolean("can_scan").notNull().default(false),
+  canScanAdmins: boolean("can_scan_admins").notNull().default(false),
   canViewLogs: boolean("can_view_logs").notNull().default(false),
   canSendMessages: boolean("can_send_messages").notNull().default(false),
   canGenerateReports: boolean("can_generate_reports").notNull().default(false),
@@ -191,6 +206,7 @@ export const announcements = pgTable("announcements", {
   id: uuid("id").primaryKey().defaultRandom(),
   title: varchar("title", { length: 200 }).notNull(),
   body: text("body").notNull(),
+  category: announcementCategoryEnum("category").notNull().default("custom"),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -233,6 +249,107 @@ export const absences = pgTable("absences", {
     .references(() => users.id, { onDelete: "cascade" }),
   date: date("date").notNull(),
   reason: text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// polls + poll_options + poll_votes
+// ---------------------------------------------------------------------------
+export const polls = pgTable("polls", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  question: varchar("question", { length: 500 }).notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  isActive: boolean("is_active").notNull().default(true),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const pollOptions = pgTable("poll_options", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  pollId: uuid("poll_id")
+    .notNull()
+    .references(() => polls.id, { onDelete: "cascade" }),
+  text: varchar("text", { length: 300 }).notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const pollVotes = pgTable(
+  "poll_votes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    pollId: uuid("poll_id")
+      .notNull()
+      .references(() => polls.id, { onDelete: "cascade" }),
+    optionId: uuid("option_id")
+      .notNull()
+      .references(() => pollOptions.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    votedAt: timestamp("voted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqMemberPoll: unique("poll_votes_member_poll_uniq").on(t.memberId, t.pollId),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// trivia (quiz) + trivia_questions + trivia_answers
+// A trivia is a quiz containing one or more questions; each question has its
+// own options, correct answer, and points. Answers are recorded per question.
+// ---------------------------------------------------------------------------
+export const trivia = pgTable("trivia", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: varchar("title", { length: 200 }).notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  isActive: boolean("is_active").notNull().default(true),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const triviaQuestions = pgTable("trivia_questions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  triviaId: uuid("trivia_id")
+    .notNull()
+    .references(() => trivia.id, { onDelete: "cascade" }),
+  question: varchar("question", { length: 500 }).notNull(),
+  options: text("options").notNull(), // JSON array of strings
+  correctIndex: integer("correct_index").notNull(),
+  points: integer("points").notNull().default(10),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const triviaAnswers = pgTable(
+  "trivia_answers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    questionId: uuid("question_id")
+      .notNull()
+      .references(() => triviaQuestions.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    chosenIndex: integer("chosen_index").notNull(),
+    isCorrect: boolean("is_correct").notNull(),
+    pointsEarned: integer("points_earned").notNull().default(0),
+    answeredAt: timestamp("answered_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqMemberQuestion: unique("trivia_answers_member_question_uniq").on(t.memberId, t.questionId),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// meetings — scheduled by super admins; the scanner opens during their windows
+// ---------------------------------------------------------------------------
+export const meetings = pgTable("meetings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 120 }).notNull(),
+  meetingDate: date("meeting_date"), // specific date "YYYY-MM-DD"; null = legacy weekly
+  dayOfWeek: integer("day_of_week").notNull(), // 0 = Sunday … 6 = Saturday (derived from meetingDate)
+  startTime: varchar("start_time", { length: 5 }).notNull(), // "HH:MM" 24h
+  endTime: varchar("end_time", { length: 5 }).notNull().default("12:30"), // "HH:MM" 24h
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

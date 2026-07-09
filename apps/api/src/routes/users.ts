@@ -10,7 +10,7 @@ import {
 } from "@church/shared";
 import { parseBody } from "../lib/validate";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { toPublicUser } from "../lib/serialize";
+import { toPublicUser, toPermissions } from "../lib/serialize";
 import { hashPassword } from "../lib/crypto";
 import { createUser, setPermissions, UserError } from "../services/users";
 import type { AppEnv } from "../lib/context";
@@ -114,14 +114,7 @@ userRoutes.get("/:id", adminOnly, async (c) => {
     .limit(1);
   return c.json({
     user: toPublicUser(user),
-    permissions: perms
-      ? {
-          can_scan: perms.canScan,
-          can_view_logs: perms.canViewLogs,
-          can_send_messages: perms.canSendMessages,
-          can_generate_reports: perms.canGenerateReports,
-        }
-      : null,
+    permissions: toPermissions(perms),
   });
 });
 

@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { attendance, fridayCategories, users } from "../db/schema";
-import { scanSchema, claimSetRewardSchema } from "@church/shared";
+import { scanSchema, adminScanSchema, claimSetRewardSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
 import { requireAuth, requirePermission } from "../middleware/auth";
 import {
   recordScan,
+  recordAdminScan,
   claimSetReward,
   getSetProgress,
   AttendanceError,
@@ -38,6 +39,31 @@ attendanceRoutes.post("/scan", requirePermission("can_scan"), async (c) => {
       alreadyCheckedInToday: result.alreadyCheckedInToday,
       categoryNewlyCompleted: result.categoryNewlyCompleted,
       setCompleted: result.setCompleted,
+    });
+  } catch (err) {
+    if (err instanceof AttendanceError) return c.json({ error: err.message }, err.status as 400);
+    throw err;
+  }
+});
+
+/** Admin scans another admin's QR to record their attendance (no category). */
+attendanceRoutes.post("/scan-admin", requirePermission("can_scan_admins"), async (c) => {
+  const body = await parseBody(c, adminScanSchema);
+  const admin = c.get("user");
+  try {
+    const result = await recordAdminScan({
+      qrToken: body.qrToken,
+      scannedByAdminId: admin.id,
+    });
+    return c.json({
+      member: {
+        id: result.admin.id,
+        name: `${result.admin.firstName} ${result.admin.lastName}`,
+        profileImage: result.admin.profileImage,
+      },
+      alreadyCheckedInToday: result.alreadyCheckedInToday,
+      categoryNewlyCompleted: false,
+      setCompleted: false,
     });
   } catch (err) {
     if (err instanceof AttendanceError) return c.json({ error: err.message }, err.status as 400);
@@ -117,10 +143,10 @@ attendanceRoutes.get("/progress", async (c) => {
 
 /** Admin claims/delivers a completed set reward. */
 attendanceRoutes.post("/sets/claim", requirePermission("can_scan"), async (c) => {
-  const { setId } = await parseBody(c, claimSetRewardSchema);
+  const { setId, qrToken } = await parseBody(c, claimSetRewardSchema);
   const admin = c.get("user");
   try {
-    await claimSetReward({ setId, adminId: admin.id });
+    await claimSetReward({ setId, adminId: admin.id, qrToken });
     return c.json({ ok: true });
   } catch (err) {
     if (err instanceof AttendanceError) return c.json({ error: err.message }, err.status as 400);
@@ -148,6 +174,36 @@ attendanceRoutes.get("/sets/pending", requirePermission("can_scan"), async (c) =
       id: r.id,
       memberId: r.memberId,
       memberName: `${r.firstName} ${r.lastName}`,
+      completedAt: r.completedAt.toISOString(),
+    })),
+  });
+});
+
+/** Recently verified/claimed set rewards (Completed section in Comms tab). */
+attendanceRoutes.get("/sets/completed", requirePermission("can_scan"), async (c) => {
+  const { sets } = await import("../db/schema");
+  const rows = await db
+    .select({
+      id: sets.id,
+      memberId: sets.memberId,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      verifiedAt: sets.rewardClaimedAt,
+      verifiedBy: sets.rewardClaimedBy,
+      completedAt: sets.completedAt,
+    })
+    .from(sets)
+    .innerJoin(users, eq(sets.memberId, users.id))
+    .where(eq(sets.isRewardClaimed, true))
+    .orderBy(desc(sets.rewardClaimedAt))
+    .limit(50);
+  return c.json({
+    sets: rows.map((r) => ({
+      id: r.id,
+      memberId: r.memberId,
+      memberName: `${r.firstName} ${r.lastName}`,
+      verifiedAt: r.verifiedAt?.toISOString() ?? null,
+      verifiedBy: r.verifiedBy,
       completedAt: r.completedAt.toISOString(),
     })),
   });

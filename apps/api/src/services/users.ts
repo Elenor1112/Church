@@ -2,7 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index";
 import { users, qrCodes, adminPermissions, notifications } from "../db/schema";
 import { hashPassword, newQrToken } from "../lib/crypto";
-import type { Role, UserStatus, AdminPermissionsInput } from "@church/shared";
+import type { Role, UserStatus, AdminPermissionsInput, Area } from "@church/shared";
 
 export class UserError extends Error {
   constructor(
@@ -17,6 +17,8 @@ interface CreateUserOpts {
   firstName: string;
   lastName: string;
   phone: string;
+  area: Area;
+  addressDetails: string;
   birthday: string;
   password: string;
   spousePhone?: string;
@@ -47,6 +49,8 @@ export async function createUser(opts: CreateUserOpts) {
       firstName: opts.firstName,
       lastName: opts.lastName,
       phone: opts.phone,
+      area: opts.area,
+      addressDetails: opts.addressDetails,
       birthday: opts.birthday,
       spousePhone: opts.spousePhone ?? null,
       email: opts.email ?? null,
@@ -65,6 +69,7 @@ export async function createUser(opts: CreateUserOpts) {
     await db.insert(adminPermissions).values({
       userId: created.id,
       canScan: p?.can_scan ?? true,
+      canScanAdmins: p?.can_scan_admins ?? false,
       canViewLogs: p?.can_view_logs ?? true,
       canSendMessages: p?.can_send_messages ?? false,
       canGenerateReports: p?.can_generate_reports ?? false,
@@ -99,6 +104,7 @@ export async function setPermissions(userId: string, p: AdminPermissionsInput) {
     .limit(1);
   const values = {
     canScan: p.can_scan,
+    canScanAdmins: p.can_scan_admins,
     canViewLogs: p.can_view_logs,
     canSendMessages: p.can_send_messages,
     canGenerateReports: p.can_generate_reports,

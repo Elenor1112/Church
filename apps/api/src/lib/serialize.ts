@@ -11,6 +11,8 @@ export function toPublicUser(row: UserRow): PublicUser {
     firstName: row.firstName,
     lastName: row.lastName,
     phone: row.phone,
+    area: row.area,
+    addressDetails: row.addressDetails,
     birthday: row.birthday,
     spousePhone: row.spousePhone,
     email: row.email,
@@ -27,6 +29,7 @@ export function toPermissions(row: PermsRow | null | undefined): AdminPermission
   if (!row) return null;
   return {
     can_scan: row.canScan,
+    can_scan_admins: row.canScanAdmins,
     can_view_logs: row.canViewLogs,
     can_send_messages: row.canSendMessages,
     can_generate_reports: row.canGenerateReports,

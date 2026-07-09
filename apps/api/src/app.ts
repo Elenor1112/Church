@@ -15,6 +15,9 @@ import { commsRoutes } from "./routes/comms";
 import { adminRoutes } from "./routes/admins";
 import { reportRoutes } from "./routes/reports";
 import { memberRoutes } from "./routes/member";
+import { pollRoutes } from "./routes/polls";
+import { triviaRoutes } from "./routes/trivia";
+import { meetingRoutes } from "./routes/meetings";
 import type { AppEnv } from "./lib/context";
 
 export function createApp() {
@@ -46,6 +49,9 @@ export function createApp() {
   app.route("/api/admins", adminRoutes);
   app.route("/api/reports", reportRoutes);
   app.route("/api/member", memberRoutes);
+  app.route("/api/polls", pollRoutes);
+  app.route("/api/trivia", triviaRoutes);
+  app.route("/api/meetings", meetingRoutes);
 
   app.notFound((c) => c.json({ error: "Not found" }, 404));
 

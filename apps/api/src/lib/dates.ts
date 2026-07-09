@@ -15,3 +15,17 @@ export function isoDate(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+/** Returns true when `date` falls on a Friday (local time). */
+export function isFriday(date: Date): boolean {
+  return date.getDay() === 5;
+}
+
+/**
+ * Returns true when `date` is between 10:30 AM and 12:30 PM inclusive (local
+ * time). These are the fixed scanning hours for every Friday meeting.
+ */
+export function isWithinScanWindow(date: Date): boolean {
+  const totalMinutes = date.getHours() * 60 + date.getMinutes();
+  return totalMinutes >= 10 * 60 + 30 && totalMinutes <= 12 * 60 + 30;
+}

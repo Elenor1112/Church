@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "address_details" varchar(200) DEFAULT '' NOT NULL;

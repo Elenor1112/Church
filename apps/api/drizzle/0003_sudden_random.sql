@@ -1,0 +1,2 @@
+CREATE TYPE "public"."announcement_category" AS ENUM('trips', 'occasions', 'custom');--> statement-breakpoint
+ALTER TABLE "announcements" ADD COLUMN "category" "announcement_category" DEFAULT 'custom' NOT NULL;

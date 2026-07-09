@@ -43,6 +43,7 @@ export function requireRole(...roles: Role[]) {
 
 const PERMISSION_COLUMN: Record<AdminPermissionKey, keyof typeof adminPermissions.$inferSelect> = {
   can_scan: "canScan",
+  can_scan_admins: "canScanAdmins",
   can_view_logs: "canViewLogs",
   can_send_messages: "canSendMessages",
   can_generate_reports: "canGenerateReports",

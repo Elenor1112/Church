@@ -1,0 +1,1 @@
+ALTER TABLE "admin_permissions" ADD COLUMN "can_scan_admins" boolean DEFAULT false NOT NULL;

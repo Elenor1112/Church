@@ -4,6 +4,8 @@ import type {
   AdminPermissionKey,
   CategorySlug,
   NotificationType,
+  AnnouncementCategory,
+  Area,
 } from "./constants";
 
 /** Public-safe user shape returned by the API (never includes password hash). */
@@ -12,6 +14,8 @@ export interface PublicUser {
   firstName: string;
   lastName: string;
   phone: string;
+  area: Area;
+  addressDetails: string;
   birthday: string; // YYYY-MM-DD
   spousePhone: string | null;
   email: string | null;
@@ -25,6 +29,7 @@ export interface PublicUser {
 
 export interface AdminPermissions {
   can_scan: boolean;
+  can_scan_admins: boolean;
   can_view_logs: boolean;
   can_send_messages: boolean;
   can_generate_reports: boolean;
@@ -75,6 +80,7 @@ export interface Announcement {
   id: string;
   title: string;
   body: string;
+  category: AnnouncementCategory;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -145,6 +151,89 @@ export interface DashboardStats {
 export interface ApiError {
   error: string;
   details?: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Polls
+// ---------------------------------------------------------------------------
+export interface PollOption {
+  id: string;
+  text: string;
+  sortOrder: number;
+  /** Only populated after the member has voted or the poll has expired. */
+  voteCount?: number;
+}
+
+export interface PollItem {
+  id: string;
+  question: string;
+  options: PollOption[];
+  isActive: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+  /** ID of the option this member voted for, or null if not yet voted. */
+  myVoteOptionId: string | null;
+  totalVotes: number;
+}
+
+export interface PollAdminItem extends PollItem {
+  createdBy: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Trivia
+// ---------------------------------------------------------------------------
+/** One question within a trivia quiz, as seen by a member. */
+export interface TriviaQuestionItem {
+  id: string;
+  question: string;
+  options: string[];
+  points: number;
+  /** Null = not answered yet. */
+  myAnswer: { chosenIndex: number; isCorrect: boolean; pointsEarned: number } | null;
+  /** Only revealed after the member answers (or the quiz expired). */
+  correctIndex: number | null;
+  totalAnswers: number;
+  correctAnswers: number;
+}
+
+export interface TriviaItem {
+  id: string;
+  title: string;
+  isActive: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+  questions: TriviaQuestionItem[];
+  /** Sum of points across all questions. */
+  totalPoints: number;
+}
+
+/** Admin view of a question — correctIndex is always revealed. */
+export interface TriviaAdminQuestionItem extends Omit<TriviaQuestionItem, "correctIndex"> {
+  correctIndex: number;
+}
+
+export interface TriviaAdminItem extends Omit<TriviaItem, "questions"> {
+  createdBy: string | null;
+  questions: TriviaAdminQuestionItem[];
+}
+
+// ---------------------------------------------------------------------------
+// Meetings
+// ---------------------------------------------------------------------------
+export interface Meeting {
+  id: string;
+  name: string;
+  /** Specific calendar date "YYYY-MM-DD" (null for legacy weekly meetings). */
+  meetingDate: string | null;
+  /** 0 = Sunday … 6 = Saturday (JS getDay index; derived from meetingDate). */
+  dayOfWeek: number;
+  /** "HH:MM" 24-hour local start time. */
+  startTime: string;
+  /** "HH:MM" 24-hour local end time. */
+  endTime: string;
+  createdBy: string | null;
+  createdAt: string;
 }
 
 export type { Role, UserStatus, AdminPermissionKey, CategorySlug, NotificationType };

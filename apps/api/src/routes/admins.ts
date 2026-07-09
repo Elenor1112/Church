@@ -5,7 +5,7 @@ import { users, adminPermissions } from "../db/schema";
 import { createUserSchema, adminPermissionsSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { toPublicUser } from "../lib/serialize";
+import { toPublicUser, toPermissions } from "../lib/serialize";
 import { createUser, setPermissions, UserError } from "../services/users";
 import type { AppEnv } from "../lib/context";
 
@@ -23,6 +23,7 @@ adminRoutes.post("/", async (c) => {
       status: "approved",
       permissions: body.permissions ?? {
         can_scan: true,
+        can_scan_admins: false,
         can_view_logs: true,
         can_send_messages: false,
         can_generate_reports: false,
@@ -52,14 +53,5 @@ adminRoutes.get("/:id/permissions", async (c) => {
     .from(adminPermissions)
     .where(eq(adminPermissions.userId, id))
     .limit(1);
-  return c.json({
-    permissions: perms
-      ? {
-          can_scan: perms.canScan,
-          can_view_logs: perms.canViewLogs,
-          can_send_messages: perms.canSendMessages,
-          can_generate_reports: perms.canGenerateReports,
-        }
-      : null,
-  });
+  return c.json({ permissions: toPermissions(perms) });
 });
