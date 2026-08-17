@@ -4,6 +4,7 @@ import { db } from "../db/index";
 import { attendance, users, sets } from "../db/schema";
 import { requireAuth, requirePermission, requireRole } from "../middleware/auth";
 import { isoDate } from "../lib/dates";
+import { toCsv } from "../lib/csv";
 import type { AppEnv } from "../lib/context";
 import type { DashboardStats } from "@church/shared";
 
@@ -33,16 +34,17 @@ reportRoutes.get("/attendance.csv", requirePermission("can_generate_reports"), a
     .where(where)
     .orderBy(desc(attendance.checkedInAt));
 
-  const header = "Member,Phone,Checked In At,Week,Year\n";
-  const body = rows
-    .map(
-      (r) =>
-        `"${r.memberName}","${r.phone}","${r.checkedInAt.toISOString()}",${r.week},${r.year}`,
-    )
-    .join("\n");
+  const csv = toCsv(
+    ["Member", "Phone", "Checked In At", "Week", "Year"],
+    rows.map((r) => [r.memberName, r.phone, r.checkedInAt.toISOString(), r.week, r.year]),
+  );
+
+  // Only `today` and `month` are valid ranges; anything else would otherwise be
+  // reflected into the Content-Disposition header.
+  const safeRange = range === "today" ? "today" : "month";
   c.header("Content-Type", "text/csv; charset=utf-8");
-  c.header("Content-Disposition", `attachment; filename="attendance-${range}.csv"`);
-  return c.body(header + body);
+  c.header("Content-Disposition", `attachment; filename="attendance-${safeRange}.csv"`);
+  return c.body(csv);
 });
 
 /** Super-admin dashboard aggregate. */

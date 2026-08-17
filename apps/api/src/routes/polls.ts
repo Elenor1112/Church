@@ -4,13 +4,14 @@ import { db } from "../db/index";
 import { polls, pollOptions, pollVotes, notifications, users } from "../db/schema";
 import { createPollSchema, pollVoteSchema, toggleActiveSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requirePermission, requireRole } from "../middleware/auth";
+import { requireAuth, requireApproved, requirePermission, requireRole } from "../middleware/auth";
+import { fanOutNotifications } from "../services/notify";
 import type { AppEnv } from "../lib/context";
 import type { PollItem, PollAdminItem } from "@church/shared";
 
 export const pollRoutes = new Hono<AppEnv>();
 
-pollRoutes.use("*", requireAuth);
+pollRoutes.use("*", requireAuth, requireApproved);
 
 // ---------------------------------------------------------------------------
 // Member: list active polls
@@ -154,16 +155,10 @@ pollRoutes.post("/", requirePermission("can_send_messages"), async (c) => {
     .from(users)
     .where(and(eq(users.role, "member"), eq(users.status, "approved")));
 
-  if (members.length > 0) {
-    await db.insert(notifications).values(
-      members.map((m) => ({
-        userId: m.id,
-        title: "📊 New Poll",
-        message: body.question,
-        type: "generic" as const,
-      })),
-    );
-  }
+  await fanOutNotifications(
+    members.map((m) => m.id),
+    { title: "📊 New Poll", message: body.question, type: "generic" },
+  );
 
   return c.json({ poll: { id: created.id } }, 201);
 });

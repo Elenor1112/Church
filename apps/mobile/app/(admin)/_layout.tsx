@@ -12,12 +12,14 @@ export default function AdminLayout() {
   const perms = usePermissions();
   const pending = usePendingCount();
 
+  // Icons are the OUTLINE variants; the tab bar swaps to the filled glyph on
+  // selection, so the active tab is legible without relying on colour alone.
   const TabBar = makeTabBar({
-    scanner: { icon: "scan", label: t("scanner") },
-    attendance: { icon: "list", label: t("attendance") },
-    comms: { icon: "chatbubbles", label: t("comms") },
-    members: { icon: "people", label: t("members"), badge: pending.data?.count },
-    profile: { icon: "person", label: t("profile") },
+    scanner: { icon: "scan-outline", label: t("scanner") },
+    attendance: { icon: "list-outline", label: t("attendance") },
+    comms: { icon: "chatbubbles-outline", label: t("comms") },
+    members: { icon: "people-outline", label: t("members"), badge: pending.data?.count },
+    profile: { icon: "person-outline", label: t("profile") },
   });
 
   return (
@@ -27,6 +29,8 @@ export default function AdminLayout() {
       <Tabs.Screen name="comms" options={{ href: perms.canSendMessages ? undefined : null }} />
       <Tabs.Screen name="members" />
       <Tabs.Screen name="profile" />
+      {/* polls is not a visible tab; navigated to from comms */}
+      <Tabs.Screen name="polls" options={{ href: null }} />
     </Tabs>
   );
 }

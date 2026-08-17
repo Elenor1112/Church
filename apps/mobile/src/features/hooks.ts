@@ -6,6 +6,7 @@ import type {
   PublicUser,
   AdminPermissions,
   SetProgress,
+  ProgressDetail,
   AttendanceRecord,
   NotificationItem,
   Announcement,
@@ -19,6 +20,21 @@ import type {
   CategorySlug,
   Role,
   UserStatus,
+  PollItem,
+  PollAdminItem,
+  TriviaItem,
+  TriviaAdminItem,
+  WheelItem,
+  WheelAdminItem,
+  WheelSpinResult,
+  AnnouncementCategory,
+  Meeting,
+} from "@church/shared";
+import type {
+  CreatePollInput,
+  CreateTriviaInput,
+  CreateWheelInput,
+  CreateMeetingInput,
 } from "@church/shared";
 import type { LoginInput, RegisterInput } from "@church/shared";
 
@@ -45,10 +61,11 @@ export interface MemberHome {
   greetingName: string;
   verse: { en: string; refEn: string; ar: string; refAr: string };
   meeting: { titleEn: string; titleAr: string; day: string; time: string };
+  meetings: Meeting[];
   attendanceCount: number;
   completedSets: number;
   progress: SetProgress;
-  announcements: { id: string; title: string; body: string; createdAt: string }[];
+  announcements: { id: string; title: string; body: string; category: AnnouncementCategory; createdAt: string }[];
 }
 
 export function useMemberHome() {
@@ -62,11 +79,28 @@ export function useSetProgress() {
   });
 }
 
+/**
+ * Per-category attendance breakdown for the signed-in member (all-time counts,
+ * not just the current set). Only fetched when the progress sheet is opened.
+ */
+export function useProgressDetail(enabled = true) {
+  return useQuery({
+    queryKey: ["progress-detail"],
+    queryFn: () => api.get<ProgressDetail>("/api/attendance/progress/detail"),
+    enabled,
+  });
+}
+
 // ---- QR ----
 export function useMyQr() {
   return useQuery({
     queryKey: ["my-qr"],
-    queryFn: () => api.get<{ qrToken: string; createdAt: string }>("/api/member/qr"),
+    queryFn: () =>
+      api.get<{ qrToken: string; createdAt: string; expiresAt: string }>("/api/member/qr"),
+    // Tokens expire server-side, so refresh well inside the TTL. Without this a
+    // QR screen left open overnight would display a code the scanner rejects.
+    refetchInterval: 60 * 60_000, // hourly
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -145,7 +179,8 @@ export function useAnnouncements() {
 export function useSendAnnouncement() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title: string; body: string }) => api.post("/api/announcements", input),
+    mutationFn: (input: { title: string; body: string; category: AnnouncementCategory }) =>
+      api.post("/api/announcements", input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["announcements"] });
       qc.invalidateQueries({ queryKey: ["member-home"] });
@@ -191,6 +226,19 @@ export function useScan() {
   });
 }
 
+/** Scan an admin's QR to record their attendance (no Friday category). */
+export function useScanAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { qrToken: string }) =>
+      api.post<ScanResponse>("/api/attendance/scan-admin", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["today-count"] });
+      qc.invalidateQueries({ queryKey: ["attendance"] });
+    },
+  });
+}
+
 export function useTodayCount() {
   return useQuery({
     queryKey: ["today-count"],
@@ -218,11 +266,32 @@ export function usePendingSets() {
   });
 }
 
+export interface CompletedSet {
+  id: string;
+  memberId: string;
+  memberName: string;
+  verifiedAt: string | null;
+  verifiedBy: string | null;
+  completedAt: string;
+}
+
+export function useCompletedSets() {
+  return useQuery({
+    queryKey: ["completed-sets"],
+    queryFn: () => api.get<{ sets: CompletedSet[] }>("/api/attendance/sets/completed"),
+  });
+}
+
 export function useClaimReward() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (setId: string) => api.post("/api/attendance/sets/claim", { setId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["pending-sets"] }),
+    // qrToken (optional) verifies the scanned member QR matches the set's member.
+    mutationFn: (input: { setId: string; qrToken?: string }) =>
+      api.post("/api/attendance/sets/claim", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pending-sets"] });
+      qc.invalidateQueries({ queryKey: ["completed-sets"] });
+    },
   });
 }
 
@@ -341,6 +410,196 @@ export function useDashboard() {
   return useQuery({
     queryKey: ["dashboard"],
     queryFn: () => api.get<DashboardStats>("/api/reports/dashboard"),
+  });
+}
+
+// ---- Polls ----
+export function usePolls() {
+  return useQuery({
+    queryKey: ["polls"],
+    queryFn: () => api.get<{ polls: PollItem[] }>("/api/polls"),
+  });
+}
+
+export function useAdminPolls() {
+  return useQuery({
+    queryKey: ["polls-admin"],
+    queryFn: () => api.get<{ polls: PollAdminItem[] }>("/api/polls/admin"),
+  });
+}
+
+export function useVotePoll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pollId, optionId }: { pollId: string; optionId: string }) =>
+      api.post<{ ok: boolean }>(`/api/polls/${pollId}/vote`, { optionId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["polls"] });
+    },
+  });
+}
+
+export function useCreatePoll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreatePollInput) => api.post<{ poll: { id: string } }>("/api/polls", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["polls-admin"] });
+    },
+  });
+}
+
+export function useTogglePoll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      api.patch<{ ok: boolean }>(`/api/polls/${id}`, { isActive }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["polls-admin"] });
+      qc.invalidateQueries({ queryKey: ["polls"] });
+    },
+  });
+}
+
+// ---- Trivia ----
+export function useTrivia() {
+  return useQuery({
+    queryKey: ["trivia"],
+    queryFn: () => api.get<{ trivia: TriviaItem[] }>("/api/trivia"),
+  });
+}
+
+export function useAdminTrivia() {
+  return useQuery({
+    queryKey: ["trivia-admin"],
+    queryFn: () => api.get<{ trivia: TriviaAdminItem[] }>("/api/trivia/admin"),
+  });
+}
+
+export function useAnswerTrivia() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ questionId, chosenIndex }: { questionId: string; chosenIndex: number }) =>
+      api.post<{ isCorrect: boolean; correctIndex: number; pointsEarned: number }>(
+        `/api/trivia/questions/${questionId}/answer`,
+        { chosenIndex },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trivia"] });
+    },
+  });
+}
+
+export function useCreateTrivia() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTriviaInput) =>
+      api.post<{ trivia: { id: string } }>("/api/trivia", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trivia-admin"] });
+    },
+  });
+}
+
+export function useToggleTrivia() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      api.patch<{ ok: boolean }>(`/api/trivia/${id}`, { isActive }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trivia-admin"] });
+      qc.invalidateQueries({ queryKey: ["trivia"] });
+    },
+  });
+}
+
+// ---- Spin wheel ----
+export function useWheels() {
+  return useQuery({
+    queryKey: ["wheels"],
+    queryFn: () => api.get<{ wheels: WheelItem[] }>("/api/wheels"),
+  });
+}
+
+export function useAdminWheels() {
+  return useQuery({
+    queryKey: ["wheels-admin"],
+    queryFn: () => api.get<{ wheels: WheelAdminItem[] }>("/api/wheels/admin"),
+  });
+}
+
+/**
+ * The server decides the landing segment, so the caller animates to the returned
+ * `index` and only then reveals it. The wheel list is refreshed after the reveal
+ * (not here) so the result card does not pop in mid-spin.
+ */
+export function useSpinWheel() {
+  return useMutation({
+    mutationFn: (wheelId: string) => api.post<WheelSpinResult>(`/api/wheels/${wheelId}/spin`, {}),
+  });
+}
+
+export function useCreateWheel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateWheelInput) =>
+      api.post<{ wheel: { id: string } }>("/api/wheels", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wheels-admin"] });
+    },
+  });
+}
+
+export function useToggleWheel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      api.patch<{ ok: boolean }>(`/api/wheels/${id}`, { isActive }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wheels-admin"] });
+      qc.invalidateQueries({ queryKey: ["wheels"] });
+    },
+  });
+}
+
+export function useDeleteWheel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/wheels/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wheels-admin"] });
+      qc.invalidateQueries({ queryKey: ["wheels"] });
+    },
+  });
+}
+
+// ---- Meetings ----
+export function useMeetings() {
+  return useQuery({
+    queryKey: ["meetings"],
+    queryFn: () => api.get<{ meetings: Meeting[] }>("/api/meetings"),
+  });
+}
+
+export function useCreateMeeting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateMeetingInput) => api.post<{ meeting: Meeting }>("/api/meetings", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+      qc.invalidateQueries({ queryKey: ["member-home"] });
+    },
+  });
+}
+
+export function useDeleteMeeting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/meetings/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+      qc.invalidateQueries({ queryKey: ["member-home"] });
+    },
   });
 }
 

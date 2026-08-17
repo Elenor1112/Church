@@ -1,24 +1,26 @@
 import { Hono } from "hono";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/index";
 import { attendance, fridayCategories, users } from "../db/schema";
 import { scanSchema, adminScanSchema, claimSetRewardSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requirePermission } from "../middleware/auth";
+import { requireAuth, requireApproved, requirePermission } from "../middleware/auth";
 import {
   recordScan,
   recordAdminScan,
   claimSetReward,
   getSetProgress,
+  getProgressDetail,
   AttendanceError,
 } from "../services/attendance";
 import { isoDate } from "../lib/dates";
+import { pageParams, toPage } from "../lib/paginate";
 import type { AppEnv } from "../lib/context";
 import type { AttendanceRecord } from "@church/shared";
 
 export const attendanceRoutes = new Hono<AppEnv>();
 
-attendanceRoutes.use("*", requireAuth);
+attendanceRoutes.use("*", requireAuth, requireApproved);
 
 /** Admin scans a QR + selected category to check a member in. */
 attendanceRoutes.post("/scan", requirePermission("can_scan"), async (c) => {
@@ -84,10 +86,10 @@ attendanceRoutes.get("/today/count", requirePermission("can_scan"), async (c) =>
 /** List attendance: ?range=today|month, optional ?q=search. */
 attendanceRoutes.get("/", requirePermission("can_view_logs"), async (c) => {
   const range = c.req.query("range") ?? "today";
-  const q = c.req.query("q")?.trim().toLowerCase();
+  const q = c.req.query("q")?.trim(); // ilike is case-insensitive already
 
   const now = new Date();
-  const conditions = [];
+  const conditions: SQL[] = [];
   if (range === "month") {
     // Current calendar month, by attendance date.
     conditions.push(
@@ -97,6 +99,20 @@ attendanceRoutes.get("/", requirePermission("can_view_logs"), async (c) => {
     conditions.push(eq(attendance.attendanceDate, isoDate(now)));
   }
 
+  // Search in SQL, not in JS after the fact. Filtering a truncated page client-
+  // side meant a match beyond the row cap was simply invisible.
+  if (q) {
+    const like = `%${q}%`;
+    const search = or(
+      ilike(users.firstName, like),
+      ilike(users.lastName, like),
+      // Match against the full name too, so "john smith" finds a result.
+      ilike(sql`${users.firstName} || ' ' || ${users.lastName}`, like),
+    );
+    if (search) conditions.push(search);
+  }
+
+  const { limit, offset, page } = pageParams(c);
   const member = users;
   const rows = await db
     .select({
@@ -115,23 +131,24 @@ attendanceRoutes.get("/", requirePermission("can_view_logs"), async (c) => {
     .leftJoin(fridayCategories, eq(attendance.categoryId, fridayCategories.id))
     .where(and(...conditions))
     .orderBy(desc(attendance.checkedInAt))
-    .limit(500);
+    .limit(limit + 1) // one extra row reveals whether a next page exists
+    .offset(offset);
 
-  const records: AttendanceRecord[] = rows
-    .map((r) => ({
-      id: r.id,
-      memberId: r.memberId,
-      memberName: `${r.firstName} ${r.lastName}`,
-      adminId: r.adminId,
-      adminName: null,
-      categorySlug: r.categorySlug,
-      checkedInAt: r.checkedInAt.toISOString(),
-      weekNumber: r.weekNumber,
-      yearNumber: r.yearNumber,
-    }))
-    .filter((r) => !q || r.memberName.toLowerCase().includes(q));
+  const mapped: AttendanceRecord[] = rows.map((r) => ({
+    id: r.id,
+    memberId: r.memberId,
+    memberName: `${r.firstName} ${r.lastName}`,
+    adminId: r.adminId,
+    adminName: null,
+    categorySlug: r.categorySlug,
+    checkedInAt: r.checkedInAt.toISOString(),
+    weekNumber: r.weekNumber,
+    yearNumber: r.yearNumber,
+  }));
 
-  return c.json({ records });
+  const { items, hasMore } = toPage(mapped, { limit, offset, page });
+  // `records` is kept for backward compatibility with the current client.
+  return c.json({ records: items, page, pageSize: limit, hasMore });
 });
 
 /** Current member's set progress. */
@@ -139,6 +156,16 @@ attendanceRoutes.get("/progress", async (c) => {
   const user = c.get("user");
   const progress = await getSetProgress(user.id);
   return c.json(progress);
+});
+
+/**
+ * Current member's own per-category attendance breakdown — how many Fridays
+ * they attended in each category, all-time. Backs the progress detail screen.
+ */
+attendanceRoutes.get("/progress/detail", async (c) => {
+  const user = c.get("user");
+  const detail = await getProgressDetail(user.id);
+  return c.json(detail);
 });
 
 /** Admin claims/delivers a completed set reward. */

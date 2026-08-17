@@ -1,3 +1,12 @@
 {
-  "expo": {}
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "916cbf47-2729-4180-8571-3271f9546966"
+      }
+    },
+    "android": {
+      "package": "com.elenor1010.churchqrattendance"
+    }
+  }
 }

@@ -4,14 +4,15 @@ import { db } from "../db/index";
 import { alerts, notifications, readReceipts, users } from "../db/schema";
 import { createAlertSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requirePermission } from "../middleware/auth";
+import { requireAuth, requireApproved, requirePermission } from "../middleware/auth";
 import { resolveAudienceMemberIds } from "../services/absences";
+import { fanOutNotifications } from "../services/notify";
 import type { AppEnv } from "../lib/context";
 import type { AlertItem } from "@church/shared";
 
 export const alertRoutes = new Hono<AppEnv>();
 
-alertRoutes.use("*", requireAuth);
+alertRoutes.use("*", requireAuth, requireApproved);
 
 /** Member-facing: alerts with this member's read status. */
 alertRoutes.get("/", async (c) => {
@@ -71,15 +72,12 @@ alertRoutes.post("/", requirePermission("can_send_messages"), async (c) => {
     .values({ title: body.title, message: body.message, createdBy: user.id })
     .returning();
 
-  if (created && recipientIds.length > 0) {
-    await db.insert(notifications).values(
-      recipientIds.map((memberId) => ({
-        userId: memberId,
-        title: body.title,
-        message: body.message,
-        type: "alert" as const,
-      })),
-    );
+  if (created) {
+    await fanOutNotifications(recipientIds, {
+      title: body.title,
+      message: body.message,
+      type: "alert",
+    });
   }
 
   return c.json({ alert: created, recipientCount: recipientIds.length }, 201);

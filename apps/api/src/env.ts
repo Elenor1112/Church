@@ -8,6 +8,12 @@ const schema = z.object({
   PORT: z.coerce.number().default(8080),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   ALLOWED_ORIGINS: z.string().default("*"),
+  /**
+   * Number of trusted reverse proxies in front of the API (Railway/Fly = 1).
+   * The client IP is read this many hops from the RIGHT of x-forwarded-for, so a
+   * client-supplied header cannot forge it. 0 disables header trust entirely.
+   */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
   SEED_SUPERADMIN_PHONE: z.string().default("01000000000"),
   SEED_SUPERADMIN_PASSWORD: z.string().default("ChangeMe@123"),
   SEED_SUPERADMIN_FIRST: z.string().default("Super"),

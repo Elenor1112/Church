@@ -1,36 +1,21 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index";
-import { attendance, fridayCategories, memberCategoryProgress, users } from "../db/schema";
+import { absences, attendance, fridayCategories, memberCategoryProgress, users } from "../db/schema";
 import { ABSENCE_ALERT_THRESHOLD, PAUSE_THRESHOLD } from "@church/shared";
+import { pastFridaysSince } from "../lib/dates";
 import type { AbsentMember, AlertAudience } from "@church/shared";
 
 /**
- * Absence model — meetings are held every Friday. A member is "absent" for a
- * past Friday when they were already an approved member on that Friday yet have
- * no attendance record for it. Everything below is derived from real
- * `attendance` rows in PostgreSQL; nothing is cached or stored.
+ * Absence model — a member is "absent" for a past Friday when all of the
+ * following hold:
+ *   1. they were already an approved member that day,
+ *   2. a meeting actually took place (someone checked in),
+ *   3. they have no attendance record for it, and
+ *   4. no admin recorded an excused absence for them.
+ *
+ * Dates are local-time keys throughout, matching how `attendance_date` is
+ * written — see lib/dates.ts. Nothing here is cached or stored.
  */
-
-/** All past Fridays (UTC) on/after `since`, up to and including the most recent. */
-function pastFridaysSince(since: Date): string[] {
-  const fridays: string[] = [];
-  const now = new Date();
-  // Walk back from the most recent Friday (today if today is Friday).
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const day = d.getUTCDay(); // 0 = Sun … 5 = Fri
-  const back = (day - 5 + 7) % 7; // days since the last Friday
-  d.setUTCDate(d.getUTCDate() - back);
-
-  const sinceMidnight = Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate());
-  while (d.getTime() >= sinceMidnight) {
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(d.getUTCDate()).padStart(2, "0");
-    fridays.push(`${y}-${m}-${dd}`);
-    d.setUTCDate(d.getUTCDate() - 7);
-  }
-  return fridays;
-}
 
 interface MemberAbsence {
   memberId: string;
@@ -62,6 +47,14 @@ async function computeMemberAbsences(): Promise<MemberAbsence[]> {
   if (members.length === 0) return [];
 
   const memberIds = members.map((m) => m.id);
+
+  // A Friday only counts against a member if a meeting was actually held. Days
+  // where nobody checked in (holidays, cancelled meetings) are treated as "no
+  // meeting" rather than a mass absence for the whole congregation.
+  const heldRows = await db
+    .selectDistinct({ date: attendance.attendanceDate })
+    .from(attendance);
+  const heldDates = new Set(heldRows.map((r) => r.date));
 
   // Friday attendance dates per member (only Fridays count toward absences).
   const attended = await db
@@ -107,14 +100,34 @@ async function computeMemberAbsences(): Promise<MemberAbsence[]> {
     if (!groupByMember.has(row.memberId)) groupByMember.set(row.memberId, row.labelEn);
   }
 
+  // Excused absences, recorded by admins via POST /api/comms/absences. These
+  // were previously written but never read, so a member excused for travel or
+  // illness still accrued absences toward the auto-pause threshold.
+  const excusedRows = await db
+    .select({ memberId: absences.memberId, date: absences.date })
+    .from(absences)
+    .where(inArray(absences.memberId, memberIds));
+
+  const excusedByMember = new Map<string, Set<string>>();
+  for (const row of excusedRows) {
+    let set = excusedByMember.get(row.memberId);
+    if (!set) {
+      set = new Set();
+      excusedByMember.set(row.memberId, set);
+    }
+    set.add(row.date);
+  }
+
   return members.map((m) => {
     const createdAt = m.createdAt instanceof Date ? m.createdAt : new Date(m.createdAt);
     const expectedFridays = pastFridaysSince(createdAt);
     const attendedSet = attendedByMember.get(m.id) ?? new Set<string>();
-    const totalAbsences = expectedFridays.reduce(
-      (acc, friday) => acc + (attendedSet.has(friday) ? 0 : 1),
-      0,
-    );
+    const excusedSet = excusedByMember.get(m.id) ?? new Set<string>();
+    const totalAbsences = expectedFridays.reduce((acc, friday) => {
+      if (!heldDates.has(friday)) return acc; // no meeting held that day
+      if (attendedSet.has(friday) || excusedSet.has(friday)) return acc;
+      return acc + 1;
+    }, 0);
     return {
       memberId: m.id,
       memberName: `${m.firstName} ${m.lastName}`,

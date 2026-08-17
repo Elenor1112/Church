@@ -15,12 +15,38 @@ export const ADMIN_PERMISSIONS = [
 ] as const;
 export type AdminPermissionKey = (typeof ADMIN_PERMISSIONS)[number];
 
-/** The five fixed Friday categories. `slug` is stable; labels are bilingual. */
+/**
+ * The fixed Friday categories. `slug` is stable; labels are bilingual.
+ *
+ * Slugs are a Postgres enum (see schema.ts), so they never change even when a
+ * topic is renamed — only the labels move. That's why several slugs no longer
+ * read like their current label.
+ */
 export const FRIDAY_CATEGORIES = [
-  { slug: "contemporary_issues", labelAr: "قضايا معاصرة", labelEn: "Contemporary Issues" },
-  { slug: "bible", labelAr: "كتاب مقدس", labelEn: "Holy Bible" },
+  { slug: "contemporary_issues", labelAr: "ليتورجيا وطقس", labelEn: "Liturgy and Rite" },
+  {
+    slug: "bible",
+    labelAr: "العهد الجديد ولاهوت عقيدي",
+    labelEn: "Dogmatic theology",
+  },
   { slug: "spirituality", labelAr: "روحانيات", labelEn: "Spirituality" },
-  { slug: "saints_lives", labelAr: "سير قديسين", labelEn: "Lives of Saints" },
+  { slug: "saints_lives", labelAr: "تاريخ كنيسة", labelEn: "Church history" },
+  {
+    slug: "category_a",
+    labelAr: "العهد القديم وترجمات",
+    labelEn: "The Old Testament and Translations",
+  },
+  {
+    slug: "category_b",
+    labelAr: "قضايا معاصرة وتربية صحية",
+    labelEn: "Contemporary issues and health education",
+  },
+  {
+    slug: "category_c",
+    labelAr: "الكراسي الرسولية والطوائف",
+    labelEn: "Apostolic Sees and Sects",
+  },
+  { slug: "category_d", labelAr: "دفاعيات", labelEn: "Apologetics" },
   { slug: "free", labelAr: "حر", labelEn: "Free" },
 ] as const;
 
@@ -31,8 +57,8 @@ export const CATEGORY_SLUGS = FRIDAY_CATEGORIES.map((c) => c.slug) as [
 ];
 
 /**
- * The "Free" (5th Friday) category does NOT count toward a set. Attendance can
- * still be recorded under it, but it never advances or completes a set.
+ * The "Free" category does NOT count toward a set. Attendance can still be
+ * recorded under it, but it never advances or completes a set.
  */
 export const NON_SET_CATEGORY_SLUGS: CategorySlug[] = ["free"];
 
@@ -41,7 +67,10 @@ export const SET_CATEGORY_SLUGS = CATEGORY_SLUGS.filter(
   (s) => !NON_SET_CATEGORY_SLUGS.includes(s),
 );
 
-/** Number of distinct categories required to complete one "set" (excludes "Free"). */
+/**
+ * Number of distinct categories required to complete one "set" (excludes
+ * "Free"). Derived, so adding a category here widens the set automatically.
+ */
 export const SET_SIZE = SET_CATEGORY_SLUGS.length;
 
 /**
@@ -97,6 +126,18 @@ export function dayLabel(value: number, lang: "en" | "ar" = "en"): string {
   return lang === "ar" ? d.labelAr : d.labelEn;
 }
 
+/**
+ * How long a member's QR token stays valid. A screenshot shared after this
+ * window is worthless. `GET /api/member/qr` silently rotates a stale token, so
+ * members never see an error — they just open the app at church.
+ */
+export const QR_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** True when a QR token issued at `createdAt` is past its TTL. */
+export function isQrExpired(createdAt: Date, now: Date = new Date()): boolean {
+  return now.getTime() - createdAt.getTime() > QR_TOKEN_TTL_MS;
+}
+
 /** "YYYY-MM-DD" date-only validation. */
 export const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -135,7 +176,11 @@ export function meetingDayLabel(
   return dayLabel(dayOfWeek, lang);
 }
 
-/** Default Friday scan window — always active for backward compatibility. */
+/**
+ * Seed values for the default Friday meeting. This is inserted as a real row in
+ * the `meetings` table by the seeder — it is NOT implicitly active. Deleting
+ * that row genuinely closes the Friday scan window.
+ */
 export const DEFAULT_MEETING = {
   name: "Holy Family Meeting",
   dayOfWeek: 5, // Friday
@@ -191,13 +236,12 @@ export function isWithinMeetingWindow(meeting: MeetingWindow, date: Date): boole
 }
 
 /**
- * True if any meeting window (custom meetings + the always-on default Friday
- * window) is active at `date`. This is the single source of truth for whether
- * the scanner is open, shared by the API and the mobile app.
+ * True if any scheduled meeting window is active at `date`. Windows come purely
+ * from the database — with no meetings scheduled the scanner stays closed. This
+ * is the single source of truth, shared by the API and the mobile app.
  */
 export function isAnyMeetingActive(meetings: MeetingWindow[], date: Date): boolean {
-  const windows: MeetingWindow[] = [DEFAULT_MEETING, ...meetings];
-  return windows.some((m) => isWithinMeetingWindow(m, date));
+  return meetings.some((m) => isWithinMeetingWindow(m, date));
 }
 
 /** Format "HH:MM" 24h as a 12-hour clock label, e.g. "10:30 AM". */

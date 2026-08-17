@@ -1,8 +1,9 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { users, qrCodes, adminPermissions, notifications } from "../db/schema";
 import { hashPassword, newQrToken } from "../lib/crypto";
 import type { Role, UserStatus, AdminPermissionsInput, Area } from "@church/shared";
+import { fanOutNotifications } from "./notify";
 
 export class UserError extends Error {
   constructor(
@@ -85,15 +86,25 @@ export async function notifyAdminsOfPendingMember(name: string) {
     .select({ id: users.id })
     .from(users)
     .where(inArray(users.role, ["admin", "super_admin"]));
-  if (admins.length === 0) return;
-  await db.insert(notifications).values(
-    admins.map((a) => ({
-      userId: a.id,
+  await fanOutNotifications(
+    admins.map((a) => a.id),
+    {
       title: "New Registration",
       message: `${name} registered and is awaiting approval.`,
-      type: "approval" as const,
-    })),
+      type: "approval",
+    },
   );
+}
+
+/**
+ * Retire every session issued before a privilege change, forcing the client to
+ * re-authenticate and pick up the new role/status/permissions.
+ */
+export async function invalidateSessions(userId: string) {
+  await db
+    .update(users)
+    .set({ tokenVersion: sql`${users.tokenVersion} + 1`, updatedAt: new Date() })
+    .where(eq(users.id, userId));
 }
 
 export async function setPermissions(userId: string, p: AdminPermissionsInput) {
@@ -114,4 +125,6 @@ export async function setPermissions(userId: string, p: AdminPermissionsInput) {
   } else {
     await db.insert(adminPermissions).values({ userId, ...values });
   }
+  // Permissions are cached client-side at login, so retire existing sessions.
+  await invalidateSessions(userId);
 }

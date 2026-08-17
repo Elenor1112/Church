@@ -2,15 +2,16 @@ import { Hono } from "hono";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { attendance, announcements, qrCodes, users, meetings } from "../db/schema";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireApproved } from "../middleware/auth";
 import { getSetProgress } from "../services/attendance";
 import { newQrToken } from "../lib/crypto";
 import { verseOfTheDay } from "../data/verses";
+import { isQrExpired, QR_TOKEN_TTL_MS } from "@church/shared";
 import type { AppEnv } from "../lib/context";
 
 export const memberRoutes = new Hono<AppEnv>();
 
-memberRoutes.use("*", requireAuth);
+memberRoutes.use("*", requireAuth, requireApproved);
 
 /** Member's own QR token. Creates one if missing. */
 memberRoutes.get("/qr", async (c) => {
@@ -18,8 +19,20 @@ memberRoutes.get("/qr", async (c) => {
   let [qr] = await db.select().from(qrCodes).where(eq(qrCodes.userId, user.id)).limit(1);
   if (!qr) {
     [qr] = await db.insert(qrCodes).values({ userId: user.id, qrToken: newQrToken() }).returning();
+  } else if (isQrExpired(qr.createdAt)) {
+    // Rotate silently rather than erroring: the member just opened their QR, so
+    // hand them a working one. This is what makes a leaked screenshot useless.
+    [qr] = await db
+      .update(qrCodes)
+      .set({ qrToken: newQrToken(), createdAt: new Date() })
+      .where(eq(qrCodes.userId, user.id))
+      .returning();
   }
-  return c.json({ qrToken: qr!.qrToken, createdAt: qr!.createdAt.toISOString() });
+  return c.json({
+    qrToken: qr!.qrToken,
+    createdAt: qr!.createdAt.toISOString(),
+    expiresAt: new Date(qr!.createdAt.getTime() + QR_TOKEN_TTL_MS).toISOString(),
+  });
 });
 
 /** Regenerate the member's QR token (invalidates the old one). */

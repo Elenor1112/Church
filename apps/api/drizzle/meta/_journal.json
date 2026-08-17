@@ -78,6 +78,34 @@
       "when": 1782733000000,
       "tag": "0010_meeting_end_time",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782734000000,
+      "tag": "0011_token_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782735000000,
+      "tag": "0012_categories_and_wheels",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782736000000,
+      "tag": "0013_seed_new_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782737000000,
+      "tag": "0014_rename_category_labels",
+      "breakpoints": true
     }
   ]
 }

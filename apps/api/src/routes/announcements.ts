@@ -4,14 +4,15 @@ import { db } from "../db/index";
 import { announcements, notifications, users } from "../db/schema";
 import { createAnnouncementSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requirePermission } from "../middleware/auth";
+import { requireAuth, requireApproved, requirePermission } from "../middleware/auth";
 import { resolveAudienceMemberIds } from "../services/absences";
+import { fanOutNotifications } from "../services/notify";
 import type { AppEnv } from "../lib/context";
 import type { Announcement } from "@church/shared";
 
 export const announcementRoutes = new Hono<AppEnv>();
 
-announcementRoutes.use("*", requireAuth);
+announcementRoutes.use("*", requireAuth, requireApproved);
 
 announcementRoutes.get("/", async (c) => {
   const creator = users;
@@ -55,16 +56,11 @@ announcementRoutes.post("/", requirePermission("can_send_messages"), async (c) =
   // resolver as alerts so both paths target an identical recipient set
   // (role = member, status = approved) — no duplicated targeting logic.
   const recipientIds = await resolveAudienceMemberIds("all");
-  if (recipientIds.length > 0) {
-    await db.insert(notifications).values(
-      recipientIds.map((memberId) => ({
-        userId: memberId,
-        title: body.title,
-        message: body.body,
-        type: "announcement" as const,
-      })),
-    );
-  }
+  await fanOutNotifications(recipientIds, {
+    title: body.title,
+    message: body.body,
+    type: "announcement",
+  });
   return c.json({ announcement: created }, 201);
 });
 

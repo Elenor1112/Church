@@ -1,51 +1,87 @@
 import React from "react";
-import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@/theme/ThemeProvider";
 import { Text } from "@/components/ui";
-import { radius } from "@/theme/tokens";
+import { radius, spacing, iconSize, hairline } from "@/theme/tokens";
 
 interface AppSheetProps {
   title: string;
+  /** Optional supporting line under the title. */
+  subtitle?: string;
   onClose: () => void;
   /** Scrollable body content (form fields, etc.). */
   children: React.ReactNode;
   /** Fixed footer, e.g. Cancel / Save buttons. */
   footer?: React.ReactNode;
-  /** Fraction of screen height the body may occupy before scrolling. */
+  /** Fraction of screen height the body occupies (fixed — never measure-snaps). */
   bodyMaxHeightRatio?: number;
 }
 
 /**
- * Bottom sheet content for the overlay host. Render this from `overlay.open`
- * with `variant: "sheet"` — the host handles the backdrop, slide-up animation,
- * backdrop/back-button dismissal, and bottom anchoring.
+ * Bottom-sheet content for the overlay host. Rendered inside a native <Modal>,
+ * so touch + keyboard handling are reliable.
  *
- * Layout mirrors the previous modal: fixed header, scrollable body bounded by an
- * explicit pixel maxHeight (so the column can't collapse to 0 under Fabric),
- * and a fixed footer padded for the bottom safe area.
+ * Rendered inside a native <Modal>, so KeyboardAvoidingView works correctly and
+ * does NOT intercept touches (the portal-layer problem is gone). The body uses a
+ * FIXED height so the sheet never measure-snaps/jumps.
  */
-export function AppSheet({ title, onClose, children, footer, bodyMaxHeightRatio = 0.62 }: AppSheetProps) {
+export function AppSheet({
+  title,
+  subtitle,
+  onClose,
+  children,
+  footer,
+  bodyMaxHeightRatio = 0.55,
+}: AppSheetProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { height: screenH } = useWindowDimensions();
 
   return (
-    <Pressable
-      // Swallow taps so they don't fall through to the backdrop.
-      onPress={(e) => e.stopPropagation()}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={{
-        backgroundColor: colors.background,
+        backgroundColor: colors.card,
         borderTopLeftRadius: radius.lg,
         borderTopRightRadius: radius.lg,
+        borderTopWidth: hairline,
+        borderColor: colors.border,
         maxHeight: screenH * 0.92,
       }}
     >
+      {/* Grabber — the affordance that says this panel is dismissible. */}
+      <View
+        style={{
+          alignSelf: "center",
+          width: 36,
+          height: 4,
+          borderRadius: radius.pill,
+          backgroundColor: colors.borderStrong,
+          marginTop: spacing.md,
+        }}
+      />
+
       <View style={styles.header}>
-        <Text variant="heading">{title}</Text>
-        <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close">
-          <Ionicons name="close" size={24} color={colors.muted} />
+        <View style={{ flex: 1, gap: spacing.xxs }}>
+          <Text variant="heading">{title}</Text>
+          {subtitle ? (
+            <Text variant="caption" tone="muted">
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+        <Pressable onPress={onClose} hitSlop={16} accessibilityRole="button" accessibilityLabel="Close">
+          <Ionicons name="close" size={iconSize.lg} color={colors.muted} />
         </Pressable>
       </View>
 
@@ -53,8 +89,12 @@ export function AppSheet({ title, onClose, children, footer, bodyMaxHeightRatio 
         style={{ maxHeight: screenH * bodyMaxHeightRatio }}
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
+        // "always" so a tap reaches the control on the first touch even while
+        // the keyboard is open ("handled" eats the first tap to dismiss it).
+        keyboardShouldPersistTaps="always"
+        keyboardDismissMode="none"
+        // Extra bottom space so the focused field can scroll clear of the
+        // keyboard instead of being hidden behind it.
         automaticallyAdjustKeyboardInsets
       >
         {children}
@@ -62,15 +102,12 @@ export function AppSheet({ title, onClose, children, footer, bodyMaxHeightRatio 
 
       {footer ? (
         <View
-          style={[
-            styles.footer,
-            { paddingBottom: insets.bottom + 12, borderTopColor: colors.border },
-          ]}
+          style={[styles.footer, { paddingBottom: insets.bottom + spacing.md, borderTopColor: colors.border }]}
         >
           {footer}
         </View>
       ) : null}
-    </Pressable>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -78,17 +115,17 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 12,
+    gap: spacing.md,
+    paddingHorizontal: spacing.xxl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.md,
   },
-  body: { paddingHorizontal: 24, paddingBottom: 16, gap: 16 },
+  body: { paddingHorizontal: spacing.xxl, paddingBottom: spacing.lg, gap: spacing.lg },
   footer: {
     flexDirection: "row",
-    gap: 12,
-    paddingHorizontal: 24,
-    paddingTop: 12,
+    gap: spacing.md,
+    paddingHorizontal: spacing.xxl,
+    paddingTop: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
 });

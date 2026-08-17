@@ -4,6 +4,7 @@ import { db } from "../db/index";
 import { users, adminPermissions, notifications } from "../db/schema";
 import {
   updateUserSchema,
+  updateOwnProfileSchema,
   updateStatusSchema,
   createUserSchema,
   pushTokenSchema,
@@ -13,6 +14,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { toPublicUser, toPermissions } from "../lib/serialize";
 import { hashPassword } from "../lib/crypto";
 import { createUser, setPermissions, UserError } from "../services/users";
+import { pageParams, toPage } from "../lib/paginate";
 import type { AppEnv } from "../lib/context";
 import type { Role, UserStatus } from "@church/shared";
 
@@ -33,7 +35,7 @@ userRoutes.post("/me/push-token", async (c) => {
 /** Update own profile. */
 userRoutes.patch("/me", async (c) => {
   const user = c.get("user");
-  const body = await parseBody(c, updateUserSchema);
+  const body = await parseBody(c, updateOwnProfileSchema);
   // Members cannot change their own role/status.
   const patch: Record<string, unknown> = { updatedAt: new Date() };
   if (body.firstName !== undefined) patch.firstName = body.firstName;
@@ -63,18 +65,23 @@ userRoutes.get("/", adminOnly, async (c) => {
       ilike(users.firstName, like),
       ilike(users.lastName, like),
       ilike(users.phone, like),
+      // Full name, so a search for "john smith" matches.
+      ilike(sql`${users.firstName} || ' ' || ${users.lastName}`, like),
     );
     if (search) conditions.push(search);
   }
 
+  const { limit, offset, page } = pageParams(c);
   const rows = await db
     .select()
     .from(users)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(users.createdAt))
-    .limit(500);
+    .limit(limit + 1)
+    .offset(offset);
 
-  return c.json({ users: rows.map(toPublicUser) });
+  const { items, hasMore } = toPage(rows.map(toPublicUser), { limit, offset, page });
+  return c.json({ users: items, page, pageSize: limit, hasMore });
 });
 
 /** Pending approvals count (admin). */
@@ -127,19 +134,25 @@ userRoutes.patch("/:id", adminOnly, async (c) => {
   const [target] = await db.select().from(users).where(eq(users.id, id)).limit(1);
   if (!target) return c.json({ error: "User not found" }, 404);
 
-  const editingStaff = target.role !== "member" || (body.role && body.role !== "member");
-  if (editingStaff && caller.role !== "super_admin") {
+  // This endpoint can no longer change roles, so only the target's current role
+  // decides whether super-admin rights are required.
+  if (target.role !== "member" && caller.role !== "super_admin") {
     return c.json({ error: "Only super admins can edit staff accounts" }, 403);
   }
 
+  // Profile fields only. Deliberately excluded:
+  // - `password`: an admin must not be able to reset a member's password and
+  //   take over their account. Password changes belong on PATCH /users/me.
+  // - `status`: must go through PATCH /:id/status, which enforces the
+  //   approve/reject reversal rule and sends the decision notification.
+  // - `role`: role changes are a super-admin operation via /api/admins.
   const patch: Record<string, unknown> = { updatedAt: new Date() };
-  for (const k of ["firstName", "lastName", "phone", "email", "spousePhone", "birthday", "profileImage", "role", "status"] as const) {
+  for (const k of ["firstName", "lastName", "phone", "email", "spousePhone", "birthday", "profileImage"] as const) {
     if (body[k] !== undefined) patch[k] = body[k];
   }
-  if (body.password) patch.passwordHash = await hashPassword(body.password);
 
   const [updated] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
-  if (body.permissions && (body.role === "admin" || target.role === "admin")) {
+  if (body.permissions && target.role === "admin") {
     await setPermissions(id, body.permissions);
   }
   return c.json({ user: toPublicUser(updated!) });
@@ -162,9 +175,11 @@ userRoutes.patch("/:id/status", adminOnly, async (c) => {
     return c.json({ error: "Only super admins can reverse a finalized decision" }, 403);
   }
 
+  // Bump token_version in the same statement: a status change must retire any
+  // session still holding the old status.
   const [updated] = await db
     .update(users)
-    .set({ status, updatedAt: new Date() })
+    .set({ status, tokenVersion: sql`${users.tokenVersion} + 1`, updatedAt: new Date() })
     .where(eq(users.id, id))
     .returning();
 

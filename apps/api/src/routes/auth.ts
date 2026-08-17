@@ -7,7 +7,7 @@ import { parseBody } from "../lib/validate";
 import { verifyPassword, signToken } from "../lib/crypto";
 import { toPublicUser, toPermissions } from "../lib/serialize";
 import { requireAuth } from "../middleware/auth";
-import { rateLimit } from "../middleware/rateLimit";
+import { rateLimit, consumeLimiter } from "../middleware/rateLimit";
 import { createUser, notifyAdminsOfPendingMember, UserError } from "../services/users";
 import type { AppEnv } from "../lib/context";
 import type { AuthResponse } from "@church/shared";
@@ -15,6 +15,13 @@ import type { AuthResponse } from "@church/shared";
 export const authRoutes = new Hono<AppEnv>();
 
 const authLimiter = rateLimit({ windowMs: 60_000, max: 10, keyPrefix: "auth" });
+
+/**
+ * Per-account login throttle. The IP limiter alone does not stop a distributed
+ * attack against a single account, so also cap failed attempts per phone
+ * number. Checked after body parsing, since the phone lives in the body.
+ */
+const loginAttempts = consumeLimiter({ windowMs: 15 * 60_000, max: 10, keyPrefix: "login-acct" });
 
 authRoutes.post("/register", authLimiter, async (c) => {
   const body = await parseBody(c, registerSchema);
@@ -25,7 +32,7 @@ authRoutes.post("/register", authLimiter, async (c) => {
       status: "pending",
     });
     await notifyAdminsOfPendingMember(`${user.firstName} ${user.lastName}`);
-    const token = signToken({ sub: user.id, role: user.role });
+    const token = signToken({ sub: user.id, role: user.role, tv: user.tokenVersion });
     const res: AuthResponse = { token, user: toPublicUser(user), permissions: null };
     return c.json(res, 201);
   } catch (err) {
@@ -38,6 +45,9 @@ authRoutes.post("/login", authLimiter, async (c) => {
   const { phone, password } = await parseBody(c, loginSchema);
   const [user] = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    // Count failures only, so a legitimate user is never locked out by their own
+    // successful logins.
+    loginAttempts(phone);
     return c.json({ error: "Invalid phone number or password" }, 401);
   }
   if (user.status === "rejected") {
@@ -53,7 +63,7 @@ authRoutes.post("/login", authLimiter, async (c) => {
           .limit(1)
       : [];
 
-  const token = signToken({ sub: user.id, role: user.role });
+  const token = signToken({ sub: user.id, role: user.role, tv: user.tokenVersion });
   const res: AuthResponse = {
     token,
     user: toPublicUser(user),

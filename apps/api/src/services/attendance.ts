@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import {
   attendance,
@@ -11,8 +11,9 @@ import {
   meetings,
 } from "../db/schema";
 import { isoWeek, isoDate } from "../lib/dates";
-import { SET_SIZE, NON_SET_CATEGORY_SLUGS, isAnyMeetingActive } from "@church/shared";
+import { SET_SIZE, NON_SET_CATEGORY_SLUGS, isAnyMeetingActive, isQrExpired } from "@church/shared";
 import type { CategorySlug, MeetingWindow } from "@church/shared";
+import { fanOutNotifications } from "./notify";
 
 const NON_SET_SLUGS = NON_SET_CATEGORY_SLUGS as string[];
 
@@ -65,6 +66,11 @@ export async function recordScan(opts: {
 
   const [qr] = await db.select().from(qrCodes).where(eq(qrCodes.qrToken, qrToken)).limit(1);
   if (!qr) throw new AttendanceError(404, "QR code not recognized");
+  // Expired tokens are refused even though the row still exists — this is what
+  // stops a screenshot from last week being scanned today.
+  if (isQrExpired(qr.createdAt)) {
+    throw new AttendanceError(410, "This QR code has expired. Ask the member to reopen their app.");
+  }
 
   const [member] = await db.select().from(users).where(eq(users.id, qr.userId)).limit(1);
   if (!member) throw new AttendanceError(404, "Member not found");
@@ -103,14 +109,32 @@ export async function recordScan(opts: {
     };
   }
 
-  await db.insert(attendance).values({
-    memberId: member.id,
-    adminId,
-    categoryId: category.id,
-    attendanceDate: today,
-    weekNumber: week,
-    yearNumber: year,
-  });
+  // The INSERT is the real gate. The SELECT above is a fast path for the common
+  // case, but two rapid scans can both pass it; letting the unique constraint
+  // decide means the loser gets the friendly "already checked in" result instead
+  // of a 500 from a constraint violation.
+  const inserted = await db
+    .insert(attendance)
+    .values({
+      memberId: member.id,
+      adminId,
+      categoryId: category.id,
+      attendanceDate: today,
+      weekNumber: week,
+      yearNumber: year,
+    })
+    .onConflictDoNothing({ target: [attendance.memberId, attendance.attendanceDate] })
+    .returning({ id: attendance.id });
+
+  if (inserted.length === 0) {
+    // Another scan won the race — do not advance progress a second time.
+    return {
+      member,
+      alreadyCheckedInToday: true,
+      categoryNewlyCompleted: false,
+      setCompleted: false,
+    };
+  }
 
   // Advance category progress (upsert -> completed).
   const [existingProgress] = await db
@@ -141,8 +165,8 @@ export async function recordScan(opts: {
     categoryNewlyCompleted = true;
   }
 
-  // Check if the set is now complete. "Free" (5th Friday) never counts toward a
-  // set, so only distinct non-free completed categories are tallied.
+  // Check if the set is now complete. "Free" never counts toward a set, so only
+  // distinct non-free completed categories are tallied against SET_SIZE.
   let setCompleted = false;
   if (categoryNewlyCompleted && !NON_SET_SLUGS.includes(category.slug)) {
     const completedRows = await db
@@ -185,6 +209,9 @@ export async function recordAdminScan(opts: {
 
   const [qr] = await db.select().from(qrCodes).where(eq(qrCodes.qrToken, qrToken)).limit(1);
   if (!qr) throw new AttendanceError(404, "QR code not recognized");
+  if (isQrExpired(qr.createdAt)) {
+    throw new AttendanceError(410, "This QR code has expired. Ask them to reopen their app.");
+  }
 
   const [admin] = await db.select().from(users).where(eq(users.id, qr.userId)).limit(1);
   if (!admin) throw new AttendanceError(404, "User not found");
@@ -212,16 +239,21 @@ export async function recordAdminScan(opts: {
     return { admin, alreadyCheckedInToday: true };
   }
 
-  // No categoryId: admin attendance is not tied to a Friday set.
-  await db.insert(attendance).values({
-    memberId: admin.id,
-    adminId: scannedByAdminId,
-    attendanceDate: today,
-    weekNumber: week,
-    yearNumber: year,
-  });
+  // No categoryId: admin attendance is not tied to a Friday set. As above, the
+  // unique constraint settles concurrent scans rather than raising a 500.
+  const inserted = await db
+    .insert(attendance)
+    .values({
+      memberId: admin.id,
+      adminId: scannedByAdminId,
+      attendanceDate: today,
+      weekNumber: week,
+      yearNumber: year,
+    })
+    .onConflictDoNothing({ target: [attendance.memberId, attendance.attendanceDate] })
+    .returning({ id: attendance.id });
 
-  return { admin, alreadyCheckedInToday: false };
+  return { admin, alreadyCheckedInToday: inserted.length === 0 };
 }
 
 async function notifyAdminsOfSet(member: typeof users.$inferSelect) {
@@ -230,15 +262,14 @@ async function notifyAdminsOfSet(member: typeof users.$inferSelect) {
     .from(users)
     .where(inArray(users.role, ["admin", "super_admin"]));
 
-  if (admins.length === 0) return;
   const memberName = `${member.firstName} ${member.lastName}`;
-  await db.insert(notifications).values(
-    admins.map((a) => ({
-      userId: a.id,
+  await fanOutNotifications(
+    admins.map((a) => a.id),
+    {
       title: "🎁 Set Completed",
       message: `${memberName} completed a set of all four Friday categories.`,
-      type: "set_completed" as const,
-    })),
+      type: "set_completed",
+    },
   );
 }
 
@@ -267,25 +298,29 @@ export async function claimSetReward(opts: {
     }
   }
 
-  await db
+  // Atomic claim. The driver is neon-http, which has no interactive
+  // transactions, so the UPDATE itself is the gate: a single statement flips the
+  // flag only if it is still false. Two concurrent claims both pass the SELECT
+  // above, but exactly one gets a row back here — the loser sees 409 and no
+  // side effects run twice.
+  const claimed = await db
     .update(sets)
     .set({ isRewardClaimed: true, rewardClaimedBy: adminId, rewardClaimedAt: new Date() })
-    .where(eq(sets.id, setId));
+    .where(and(eq(sets.id, setId), eq(sets.isRewardClaimed, false)))
+    .returning({ id: sets.id });
+
+  if (claimed.length === 0) throw new AttendanceError(409, "Reward already claimed");
 
   // Reset progress for the next cycle.
   await db
     .delete(memberCategoryProgress)
     .where(eq(memberCategoryProgress.memberId, set.memberId));
 
-  // Increment completed-sets counter on the member.
-  const [member] = await db
-    .select({ completedSets: users.completedSets })
-    .from(users)
-    .where(eq(users.id, set.memberId))
-    .limit(1);
+  // Increment in SQL, not read-modify-write, so concurrent claims for different
+  // sets of the same member cannot lose an update.
   await db
     .update(users)
-    .set({ completedSets: (member?.completedSets ?? 0) + 1, updatedAt: new Date() })
+    .set({ completedSets: sql`${users.completedSets} + 1`, updatedAt: new Date() })
     .where(eq(users.id, set.memberId));
 
   // Notify the member.
@@ -331,6 +366,95 @@ export async function getSetProgress(memberId: string) {
     completedCount: cats.filter((c) => c.completed).length,
     total: SET_SIZE,
     categories: cats,
+    pendingRewardSetId: pendingReward?.id ?? null,
+  };
+}
+
+/**
+ * Per-category attendance breakdown for the member's own progress screen.
+ *
+ * `getSetProgress` only answers "is this category ticked in the set I'm working
+ * on right now?" — and that state is wiped every time a reward is claimed. This
+ * counts the raw attendance rows instead, so the member sees how many Fridays
+ * they actually attended in each category over their whole history, not just
+ * the current cycle.
+ */
+export async function getProgressDetail(memberId: string) {
+  const categories = await db.select().from(fridayCategories).orderBy(fridayCategories.sortOrder);
+
+  // All-time attendance per category. Rows with a null categoryId (admin
+  // check-ins) simply don't join to a category and are excluded here; the
+  // all-time total below counts them.
+  const countRows = await db
+    .select({
+      categoryId: attendance.categoryId,
+      attendedCount: sql<number>`count(*)::int`,
+      lastAttendedDate: sql<string>`max(${attendance.attendanceDate})`,
+    })
+    .from(attendance)
+    .where(eq(attendance.memberId, memberId))
+    .groupBy(attendance.categoryId);
+
+  const statsByCat = new Map(
+    countRows
+      .filter((r) => r.categoryId !== null)
+      .map((r) => [
+        r.categoryId!,
+        { attendedCount: r.attendedCount, lastAttendedDate: r.lastAttendedDate },
+      ]),
+  );
+
+  const progressRows = await db
+    .select()
+    .from(memberCategoryProgress)
+    .where(eq(memberCategoryProgress.memberId, memberId));
+  const completedByCat = new Map(progressRows.map((p) => [p.categoryId, p.completed]));
+
+  const toDetail = (c: typeof fridayCategories.$inferSelect) => {
+    const stats = statsByCat.get(c.id);
+    return {
+      slug: c.slug,
+      labelAr: c.labelAr,
+      labelEn: c.labelEn,
+      attendedCount: stats?.attendedCount ?? 0,
+      completedInCurrentSet: completedByCat.get(c.id) ?? false,
+      lastAttendedDate: stats?.lastAttendedDate ?? null,
+      countsTowardSet: !NON_SET_SLUGS.includes(c.slug),
+    };
+  };
+
+  const setCats = categories.filter((c) => !NON_SET_SLUGS.includes(c.slug)).map(toDetail);
+  // Non-set categories are only worth showing once they have something in them —
+  // an always-empty "Free" row is noise on the member's progress sheet.
+  const extraCats = categories
+    .filter((c) => NON_SET_SLUGS.includes(c.slug))
+    .map(toDetail)
+    .filter((c) => c.attendedCount > 0);
+
+  const [totalRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(attendance)
+    .where(eq(attendance.memberId, memberId));
+
+  const [member] = await db
+    .select({ completedSets: users.completedSets })
+    .from(users)
+    .where(eq(users.id, memberId))
+    .limit(1);
+
+  const [pendingReward] = await db
+    .select({ id: sets.id })
+    .from(sets)
+    .where(and(eq(sets.memberId, memberId), eq(sets.isRewardClaimed, false)))
+    .limit(1);
+
+  return {
+    categories: setCats,
+    extraCategories: extraCats,
+    completedCount: setCats.filter((c) => c.completedInCurrentSet).length,
+    total: SET_SIZE,
+    totalAttendance: totalRow?.count ?? 0,
+    completedSets: member?.completedSets ?? 0,
     pendingRewardSetId: pendingReward?.id ?? null,
   };
 }

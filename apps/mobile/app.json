@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "scheme": "churchqr",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "icon": "./assets/اجتماع العائلة المقدسة copy3.png",
     "splash": {
       "image": "./assets/splash.png",
@@ -26,14 +26,16 @@
     },
     "android": {
       "package": "church.vmsb.attendance",
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/اجتماع العائلة المقدسة copy3.png",
         "backgroundColor": "#6B0F1A"
       },
       "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "plugins": [
@@ -59,10 +61,14 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "https://churchapi-production-4993.up.railway.app",
+      "apiUrl": "https://churchapi-production-b36b.up.railway.app",
       "eas": {
-        "projectId": "c4b11181-6da3-4d10-b1b4-4dff476889cf"
+        "projectId": "916cbf47-2729-4180-8571-3271f9546966"
+      },
+      "router": {
+        "origin": false
       }
-    }
+    },
+    "owner": "elenor1010"
   }
 }

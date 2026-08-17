@@ -1,37 +1,36 @@
 import React from "react";
 import { View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path } from "react-native-svg";
+import { useTheme } from "@/theme/ThemeProvider";
+import { radius, hairline } from "@/theme/tokens";
 
-/** Circular maroon badge with a soft white cross. */
-export function CrossLogo({ size = 84 }: { size?: number }) {
+/**
+ * App mark: a soft-cornered tile with a cross glyph.
+ *
+ * Flat and neutral rather than a gradient badge — a single quiet mark reads as
+ * more considered than a glossy one, and it keeps the auth screens calm.
+ */
+export function CrossLogo({ size = 72 }: { size?: number }) {
+  const { colors } = useTheme();
+
   return (
-    <LinearGradient
-      colors={["#8B1E2D", "#6B0F1A"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
+    <View
       style={{
         width: size,
         height: size,
-        borderRadius: size / 2,
+        borderRadius: radius.lg,
+        backgroundColor: colors.primary,
+        borderWidth: hairline,
+        borderColor: colors.primary,
         alignItems: "center",
         justifyContent: "center",
-        shadowColor: "#6B0F1A",
-        shadowOpacity: 0.4,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 8 },
-        elevation: 8,
       }}
     >
-      <View style={{ width: size * 0.5, height: size * 0.5 }}>
+      <View style={{ width: size * 0.44, height: size * 0.44 }}>
         <Svg width="100%" height="100%" viewBox="0 0 24 24">
-          <Path
-            d="M10 2h4v6h6v4h-6v10h-4V12H4V8h6V2z"
-            fill="#FFFFFF"
-            opacity={0.96}
-          />
+          <Path d="M10 2h4v6h6v4h-6v10h-4V12H4V8h6V2z" fill={colors.onPrimary} />
         </Svg>
       </View>
-    </LinearGradient>
+    </View>
   );
 }

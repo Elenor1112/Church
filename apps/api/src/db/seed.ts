@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
 import { env } from "../env";
 import { db } from "./index";
-import { fridayCategories, users, qrCodes } from "./schema";
+import { fridayCategories, users, qrCodes, meetings } from "./schema";
 import { hashPassword, newQrToken } from "../lib/crypto";
-import { FRIDAY_CATEGORIES } from "@church/shared";
+import { FRIDAY_CATEGORIES, DEFAULT_MEETING } from "@church/shared";
 
 async function seedCategories() {
   for (let i = 0; i < FRIDAY_CATEGORIES.length; i++) {
@@ -52,10 +52,31 @@ async function seedSuperAdmin() {
   console.log("⚠️  Change this password immediately after first login.");
 }
 
+/**
+ * The default Friday window is a real row, not an implicit fallback — so a super
+ * admin can edit or delete it and actually close the scanner.
+ */
+async function seedDefaultMeeting() {
+  const existing = await db.select({ id: meetings.id }).from(meetings).limit(1);
+  if (existing.length > 0) {
+    console.log("ℹ️  Meetings already exist, skipping default meeting.");
+    return;
+  }
+  await db.insert(meetings).values({
+    name: DEFAULT_MEETING.name,
+    meetingDate: null, // recurring weekly
+    dayOfWeek: DEFAULT_MEETING.dayOfWeek,
+    startTime: DEFAULT_MEETING.startTime,
+    endTime: DEFAULT_MEETING.endTime,
+  });
+  console.log("✅ Seeded default Friday meeting.");
+}
+
 async function main() {
   console.log("⏳ Seeding database...");
   await seedCategories();
   await seedSuperAdmin();
+  await seedDefaultMeeting();
   console.log("✅ Seed complete.");
 }
 

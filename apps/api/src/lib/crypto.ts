@@ -17,6 +17,8 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 export interface JwtPayload {
   sub: string; // user id
   role: Role;
+  /** Must match users.token_version, else the session predates a privilege change. */
+  tv: number;
 }
 
 export function signToken(payload: JwtPayload): string {
@@ -29,9 +31,11 @@ export function verifyToken(token: string): JwtPayload | null {
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET);
     if (typeof decoded === "string") return null;
-    const { sub, role } = decoded as Record<string, unknown>;
+    const { sub, role, tv } = decoded as Record<string, unknown>;
     if (typeof sub !== "string" || typeof role !== "string") return null;
-    return { sub, role: role as Role };
+    // Tokens issued before token versioning have no `tv`; treat them as v0 so
+    // existing sessions keep working until the next privilege change.
+    return { sub, role: role as Role, tv: typeof tv === "number" ? tv : 0 };
   } catch {
     return null;
   }

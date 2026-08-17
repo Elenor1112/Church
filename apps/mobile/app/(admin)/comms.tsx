@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { View, Pressable, Alert } from "react-native";
+import { View, Alert } from "react-native";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useForm, Controller } from "react-hook-form";
 import { useTheme } from "@/theme/ThemeProvider";
 import { useI18n } from "@/i18n/I18nProvider";
 import {
@@ -11,84 +11,92 @@ import {
   usePausedMembers,
   useAlertCounts,
   usePendingSets,
-  useClaimReward,
+  useCompletedSets,
   useSendAlert,
   useSendAnnouncement,
 } from "@/features/hooks";
+import { SetVerifyScanner } from "@/features/SetVerifyScanner";
 import {
   Screen,
+  ScreenHeader,
+  SectionHeader,
   Card,
   Text,
   Button,
+  SubmitButton,
   Input,
+  TextArea,
   Avatar,
   Badge,
   EmptyState,
   SkeletonCard,
+  ListRow,
+  IconTile,
+  FilterChips,
+  OptionRow,
 } from "@/components/ui";
 import { AppSheet, useControlledOverlay } from "@/components/overlay";
 import type { AbsentMember, AlertAudience } from "@church/shared";
-import { radius } from "@/theme/tokens";
+import { spacing, iconSize, staggerDelay } from "@/theme/tokens";
 
 type Tab = "sets" | "birthdays" | "absences" | "paused" | "broadcast";
 
 export default function Comms() {
-  const { colors } = useTheme();
   const { t } = useI18n();
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("sets");
   const [composer, setComposer] = useState<"alert" | "announcement" | null>(null);
+  const composerRef = React.useRef<"alert" | "announcement" | null>(null);
+  composerRef.current = composer;
 
-  const tabs: { key: Tab; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
-    { key: "sets", icon: "gift", label: t("setNotifications") },
-    { key: "birthdays", icon: "balloon", label: t("birthdays") },
-    { key: "absences", icon: "person-remove", label: t("absences") },
-    { key: "paused", icon: "pause-circle", label: t("pausedMembers") },
-    { key: "broadcast", icon: "megaphone", label: t("send") },
+  const tabs: { value: Tab; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
+    { value: "sets", icon: "gift-outline", label: t("setNotifications") },
+    { value: "birthdays", icon: "balloon-outline", label: t("birthdays") },
+    { value: "absences", icon: "person-remove-outline", label: t("absences") },
+    { value: "paused", icon: "pause-circle-outline", label: t("pausedMembers") },
+    { value: "broadcast", icon: "megaphone-outline", label: t("send") },
   ];
 
-  // Compose-sheet driven by the global overlay host (no native <Modal>). The
-  // host renders above the tab bar; closing the overlay clears `composer`.
+  // ONE overlay, ref-based selection — same pattern as the working polls screen.
+  // Two separate useControlledOverlay calls leave a second full-screen layer
+  // mounted that intercepts touches over the visible sheet (the freeze).
   useControlledOverlay(
-    composer != null,
-    ({ close }) => <ComposerForm type={composer} onDone={close} />,
+    composer !== null,
+    ({ close }) =>
+      composerRef.current === "alert" ? (
+        <AlertForm onDone={close} />
+      ) : (
+        <AnnouncementForm onDone={close} />
+      ),
     { variant: "sheet", onClose: () => setComposer(null) },
   );
 
   return (
     <Screen>
-      <Text variant="title">{t("comms")}</Text>
+      <ScreenHeader title={t("comms")} />
 
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {tabs.map((tb) => {
-          const active = tab === tb.key;
-          return (
-            <Pressable
-              key={tb.key}
-              onPress={() => setTab(tb.key)}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-                paddingHorizontal: 14,
-                paddingVertical: 9,
-                borderRadius: radius.pill,
-                backgroundColor: active ? colors.primary : colors.cardAlt,
-              }}
-            >
-              <Ionicons name={tb.icon} size={16} color={active ? "#fff" : colors.muted} />
-              <Text variant="caption" weight="600" style={{ color: active ? "#fff" : colors.muted }}>
-                {tb.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      {/* Polls & Trivia quick-link */}
+      <ListRow
+        leading={<IconTile icon="stats-chart-outline" tone="neutral" />}
+        title={t("pollsTrivia")}
+        chevron
+        onPress={() => router.push("/(admin)/polls")}
+      />
+
+      {/* Horizontally scrollable so five labelled tabs stay on one line instead
+          of wrapping into a three-row block that pushes content off-screen. */}
+      <FilterChips value={tab} onChange={setTab} options={tabs} scrollable bleed />
 
       {tab === "sets" && <SetsView />}
       {tab === "birthdays" && <BirthdaysView />}
       {tab === "absences" && <AbsencesView />}
       {tab === "paused" && <PausedView />}
-      {tab === "broadcast" && <BroadcastView onCompose={setComposer} />}
+      {tab === "broadcast" && (
+        <BroadcastView
+          onAlert={() => setComposer("alert")}
+          onAnnouncement={() => setComposer("announcement")}
+        />
+      )}
     </Screen>
   );
 }
@@ -97,34 +105,76 @@ function SetsView() {
   const { colors } = useTheme();
   const { t } = useI18n();
   const pending = usePendingSets();
-  const claim = useClaimReward();
+  const completed = useCompletedSets();
+
+  // Which pending set is currently being verified by QR scan.
+  const [scanning, setScanning] = useState<{ setId: string; memberName: string } | null>(null);
+
   if (pending.isLoading) return <SkeletonCard />;
-  const sets = pending.data?.sets ?? [];
-  if (sets.length === 0) return <EmptyState icon="gift-outline" title={t("noData")} />;
+  const pendingSets = pending.data?.sets ?? [];
+  const completedSets = completed.data?.sets ?? [];
+
   return (
-    <>
-      {sets.map((s) => (
-        <Card key={s.id} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: colors.gold + "22", alignItems: "center", justifyContent: "center" }}>
-            <Ionicons name="gift" size={22} color={colors.gold} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text weight="600">{s.memberName}</Text>
-            <Text variant="caption" tone="muted">Completed a set 🎁</Text>
-          </View>
-          <Pressable
-            onPress={() => {
-              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              claim.mutate(s.id);
-            }}
-            style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.success + "18", paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill }}
-          >
-            <Ionicons name="checkmark-circle" size={18} color={colors.success} />
-            <Text variant="caption" weight="600" tone="success">{t("giftDelivered")}</Text>
-          </Pressable>
-        </Card>
-      ))}
-    </>
+    <View style={{ gap: spacing.md }}>
+      <SetVerifyScanner
+        visible={scanning != null}
+        setId={scanning?.setId ?? null}
+        memberName={scanning?.memberName ?? ""}
+        onClose={() => setScanning(null)}
+        onVerified={() => {
+          setScanning(null);
+        }}
+      />
+
+      {/* Pending verifications */}
+      <SectionHeader title={t("pendingVerifications")} />
+      {pendingSets.length === 0 ? (
+        <EmptyState icon="gift-outline" title={t("noData")} />
+      ) : (
+        pendingSets.map((s, i) => (
+          <ListRow
+            key={s.id}
+            animateIn
+            delay={staggerDelay(i)}
+            leading={<IconTile icon="gift-outline" tone="primary" />}
+            title={s.memberName}
+            subtitle={t("setCompleted")}
+            trailing={
+              <Button
+                title={t("scanToVerify")}
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                leftIcon={
+                  <Ionicons name="qr-code-outline" size={iconSize.sm} color={colors.primary} />
+                }
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setScanning({ setId: s.id, memberName: s.memberName });
+                }}
+              />
+            }
+          />
+        ))
+      )}
+
+      {/* Completed / verified */}
+      {completedSets.length > 0 ? (
+        <>
+          <SectionHeader title={t("completed")} />
+          {completedSets.map((s, i) => (
+            <ListRow
+              key={s.id}
+              animateIn
+              delay={staggerDelay(i)}
+              leading={<IconTile icon="checkmark-circle" tone="success" />}
+              title={s.memberName}
+              subtitle={t("verifiedGiftReceived")}
+            />
+          ))}
+        </>
+      ) : null}
+    </View>
   );
 }
 
@@ -145,58 +195,70 @@ function BirthdaysView() {
 
   return (
     <>
-      {items.map((b) => (
-        <Card key={b.id} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <Avatar name={b.name} size={42} />
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text weight="600">{b.name}</Text>
-            <Text variant="caption" tone="muted">{b.phone}</Text>
-            <Text variant="small" tone="muted">
-              {birthdayLabel(b.birthday)} · {t("age")} {b.age}
-              {b.group ? ` · ${t("group")}: ${b.group}` : ""}
-            </Text>
-          </View>
-          <Badge label={recencyLabel(b.daysAgo)} variant="gold" />
-        </Card>
+      {items.map((b, i) => (
+        <ListRow
+          key={b.id}
+          animateIn
+          delay={staggerDelay(i)}
+          leading={<Avatar name={b.name} size={40} />}
+          title={b.name}
+          subtitle={b.phone}
+          meta={`${birthdayLabel(b.birthday)} · ${t("age")} ${b.age}${b.group ? ` · ${t("group")}: ${b.group}` : ""}`}
+          trailing={<Badge label={recencyLabel(b.daysAgo)} variant="primary" />}
+        />
       ))}
     </>
   );
 }
 
-/** Shared card for an absence-derived member (Absences + Paused sections). */
-function AbsentMemberCard({ member, paused }: { member: AbsentMember; paused?: boolean }) {
+/** Shared row for an absence-derived member (Absences + Paused sections). */
+function AbsentMemberRow({
+  member,
+  paused,
+  index,
+}: {
+  member: AbsentMember;
+  paused?: boolean;
+  index: number;
+}) {
   const { t } = useI18n();
   return (
-    <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-      <Avatar name={member.memberName} size={42} />
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text weight="600">{member.memberName}</Text>
-        <Text variant="caption" tone="muted">{member.phone}</Text>
-        {member.group ? (
-          <Text variant="small" tone="muted">{t("group")}: {member.group}</Text>
-        ) : null}
-      </View>
-      <View style={{ alignItems: "flex-end", gap: 6 }}>
-        <Badge
-          label={`${member.totalAbsences} · ${t("totalAbsences")}`}
-          variant={paused ? "error" : "warning"}
-        />
-        {paused ? <Badge label={t("paused")} variant="error" /> : null}
-      </View>
-    </Card>
+    <ListRow
+      animateIn
+      delay={staggerDelay(index)}
+      leading={<Avatar name={member.memberName} size={40} />}
+      title={member.memberName}
+      subtitle={member.phone}
+      meta={member.group ? `${t("group")}: ${member.group}` : undefined}
+      trailing={
+        <View style={{ alignItems: "flex-end", gap: spacing.xs }}>
+          <Badge
+            label={`${member.totalAbsences} · ${t("totalAbsences")}`}
+            variant={paused ? "error" : "warning"}
+          />
+          {paused ? <Badge label={t("paused")} variant="error" dot /> : null}
+        </View>
+      }
+    />
   );
 }
 
 function AbsencesView() {
   const { t } = useI18n();
   const absences = useAbsentMembers();
-  if (absences.isLoading) return <><SkeletonCard /><SkeletonCard /></>;
+  if (absences.isLoading)
+    return (
+      <>
+        <SkeletonCard />
+        <SkeletonCard />
+      </>
+    );
   const items = absences.data?.members ?? [];
   if (items.length === 0) return <EmptyState icon="checkmark-circle-outline" title={t("noData")} />;
   return (
     <>
-      {items.map((m) => (
-        <AbsentMemberCard key={m.memberId} member={m} />
+      {items.map((m, i) => (
+        <AbsentMemberRow key={m.memberId} member={m} index={i} />
       ))}
     </>
   );
@@ -205,81 +267,89 @@ function AbsencesView() {
 function PausedView() {
   const { t } = useI18n();
   const paused = usePausedMembers();
-  if (paused.isLoading) return <><SkeletonCard /><SkeletonCard /></>;
+  if (paused.isLoading)
+    return (
+      <>
+        <SkeletonCard />
+        <SkeletonCard />
+      </>
+    );
   const items = paused.data?.members ?? [];
   if (items.length === 0) return <EmptyState icon="pause-circle-outline" title={t("noData")} />;
   return (
     <>
-      {items.map((m) => (
-        <AbsentMemberCard key={m.memberId} member={m} paused />
+      {items.map((m, i) => (
+        <AbsentMemberRow key={m.memberId} member={m} paused index={i} />
       ))}
     </>
   );
 }
 
-function BroadcastView({ onCompose }: { onCompose: (t: "alert" | "announcement") => void }) {
-  const { colors } = useTheme();
+function BroadcastView({
+  onAlert,
+  onAnnouncement,
+}: {
+  onAlert: () => void;
+  onAnnouncement: () => void;
+}) {
   const { t } = useI18n();
   return (
-    <View style={{ gap: 12 }}>
-      <Card style={{ gap: 12 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Ionicons name="megaphone" size={22} color={colors.primary} />
-          <Text weight="600" style={{ flex: 1 }}>{t("sendAnnouncement")}</Text>
+    <View style={{ gap: spacing.md }}>
+      <Card animateIn style={{ gap: spacing.lg }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <IconTile icon="megaphone-outline" tone="primary" />
+          <View style={{ flex: 1, gap: spacing.xxs }}>
+            <Text variant="subheading">{t("sendAnnouncement")}</Text>
+            <Text variant="caption" tone="muted">
+              Posts to every member's home feed and notifications.
+            </Text>
+          </View>
         </View>
-        <Text variant="caption" tone="muted">Posts to every member's home feed and notifications.</Text>
-        <Button title={t("sendAnnouncement")} variant="outline" onPress={() => onCompose("announcement")} />
+        <Button title={t("sendAnnouncement")} variant="outline" onPress={onAnnouncement} />
       </Card>
-      <Card style={{ gap: 12 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Ionicons name="alert-circle" size={22} color={colors.warning} />
-          <Text weight="600" style={{ flex: 1 }}>{t("sendAlert")}</Text>
+
+      <Card animateIn delay={60} style={{ gap: spacing.lg }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <IconTile icon="alert-circle-outline" tone="warning" />
+          <View style={{ flex: 1, gap: spacing.xxs }}>
+            <Text variant="subheading">{t("sendAlert")}</Text>
+            <Text variant="caption" tone="muted">
+              Time-sensitive alert with read receipts.
+            </Text>
+          </View>
         </View>
-        <Text variant="caption" tone="muted">Time-sensitive alert with read receipts.</Text>
-        <Button title={t("sendAlert")} variant="outline" onPress={() => onCompose("alert")} />
+        <Button title={t("sendAlert")} variant="outline" onPress={onAlert} />
       </Card>
     </View>
   );
 }
 
-function ComposerForm({ type, onDone }: { type: "alert" | "announcement" | null; onDone: () => void }) {
-  const { colors } = useTheme();
+function AlertForm({ onDone }: { onDone: () => void }) {
   const { t } = useI18n();
   const sendAlert = useSendAlert();
-  const sendAnnouncement = useSendAnnouncement();
   const counts = useAlertCounts();
   const [audience, setAudience] = useState<AlertAudience>("all");
-  const { control, handleSubmit, reset } = useForm({ defaultValues: { title: "", body: "" } });
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [touched, setTouched] = useState(false);
 
-  // `type` momentarily goes null while the overlay plays its exit animation;
-  // keep the last real value so the sheet doesn't blank out mid-close.
-  const lastType = React.useRef<"alert" | "announcement">("announcement");
-  if (type) lastType.current = type;
-  const shownType = type ?? lastType.current;
-
-  const close = () => { reset(); setAudience("all"); onDone(); };
-
-  // Surface send failures instead of letting the button spin forever.
-  const onError = (err: unknown) => {
-    const message = err instanceof Error ? err.message : t("somethingWrong");
-    Alert.alert(t("somethingWrong"), message);
+  const close = () => {
+    setTitle("");
+    setBody("");
+    setTouched(false);
+    setAudience("all");
+    onDone();
   };
 
-  const submit = handleSubmit((values) => {
-    if (!values.title || !values.body) return;
-    if (shownType === "alert")
-      sendAlert.mutate(
-        { title: values.title, message: values.body, audience },
-        { onSuccess: close, onError },
-      );
-    else
-      sendAnnouncement.mutate(
-        { title: values.title, body: values.body },
-        { onSuccess: close, onError },
-      );
-  });
+  const onError = (err: unknown) => {
+    Alert.alert(t("somethingWrong"), err instanceof Error ? err.message : t("somethingWrong"));
+  };
 
-  const pending = sendAlert.isPending || sendAnnouncement.isPending;
+  const submit = () => {
+    setTouched(true);
+    if (!title.trim() || !body.trim()) return;
+    sendAlert.mutate({ title, message: body, audience }, { onSuccess: close, onError });
+  };
 
   const audienceOptions: { key: AlertAudience; label: string; count: number | undefined }[] = [
     { key: "all", label: t("allMembers"), count: counts.data?.counts.all },
@@ -287,68 +357,134 @@ function ComposerForm({ type, onDone }: { type: "alert" | "announcement" | null;
     { key: "absent_6", label: t("absentSixTimes"), count: counts.data?.counts.absent_6 },
   ];
 
-  // Rendered inside the global OverlayHost as a bottom sheet — no native
-  // <Modal>, so there's no separate native window and no Fabric re-measure
-  // freeze. AppSheet handles the header/scroll-body/footer layout; the host
-  // handles the backdrop, slide-up animation, and backdrop/back dismissal.
   return (
     <AppSheet
-      title={shownType === "alert" ? t("sendAlert") : t("sendAnnouncement")}
+      title={t("sendAlert")}
       onClose={close}
       footer={
         <>
-          <View style={{ flex: 1 }}><Button title={t("cancel")} variant="outline" onPress={close} /></View>
-          <View style={{ flex: 1 }}><Button title={t("send")} loading={pending} onPress={submit} /></View>
+          <View style={{ flex: 1 }}>
+            <Button title={t("cancel")} variant="outline" onPress={close} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <SubmitButton title={t("send")} loading={sendAlert.isPending} onPress={submit} />
+          </View>
         </>
       }
     >
-      {shownType === "alert" ? (
-        <View style={{ gap: 8 }}>
-          <Text variant="caption" weight="600" tone="muted">{t("audience")}</Text>
-          {audienceOptions.map((opt) => {
-            const active = audience === opt.key;
-            return (
-              <Pressable
-                key={opt.key}
-                onPress={() => setAudience(opt.key)}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  borderRadius: radius.md,
-                  borderWidth: 1,
-                  borderColor: active ? colors.primary : colors.border,
-                  backgroundColor: active ? colors.primary + "12" : colors.cardAlt,
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                  <Ionicons
-                    name={active ? "radio-button-on" : "radio-button-off"}
-                    size={18}
-                    color={active ? colors.primary : colors.muted}
-                  />
-                  <Text weight="600" style={{ color: active ? colors.primary : colors.ink }}>
-                    {opt.label}
-                  </Text>
-                </View>
-                <Badge
-                  label={counts.isLoading || opt.count === undefined ? "…" : String(opt.count)}
-                  variant={active ? "info" : "neutral"}
-                />
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+      {/* A single-choice audience is a radio group, not a stack of buttons —
+          stacked primary buttons made every option look equally actionable. */}
+      <View style={{ gap: spacing.sm }}>
+        <Text variant="caption" weight="500" tone="muted">
+          {t("audience")}
+        </Text>
+        {audienceOptions.map((opt) => (
+          <OptionRow
+            key={opt.key}
+            label={opt.label}
+            state={audience === opt.key ? "selected" : "idle"}
+            trailing={counts.isLoading || opt.count === undefined ? "…" : String(opt.count)}
+            onPress={() => setAudience(opt.key)}
+          />
+        ))}
+      </View>
 
-      <Controller control={control} name="title" render={({ field }) => (
-        <Input label={t("title")} value={field.value} onChangeText={field.onChange} />
-      )} />
-      <Controller control={control} name="body" render={({ field }) => (
-        <Input label={shownType === "alert" ? t("message") : t("body")} value={field.value} onChangeText={field.onChange} multiline numberOfLines={4} style={{ height: 100, textAlignVertical: "top" }} />
-      )} />
+      <Input
+        label={t("title")}
+        value={title}
+        onChangeText={setTitle}
+        error={touched && !title.trim() ? t("required") : undefined}
+      />
+      <TextArea
+        label={t("message")}
+        value={body}
+        onChangeText={setBody}
+        error={touched && !body.trim() ? t("required") : undefined}
+      />
+    </AppSheet>
+  );
+}
+
+type AnnouncementCategory = "trips" | "occasions" | "custom";
+
+function AnnouncementForm({ onDone }: { onDone: () => void }) {
+  const { t } = useI18n();
+  const sendAnnouncement = useSendAnnouncement();
+  const [category, setCategory] = useState<AnnouncementCategory>("trips");
+  const [customTitle, setCustomTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  // Trips/Occasions use the preset label as the title; Custom uses the typed value.
+  const title = category === "custom" ? customTitle : t(category);
+
+  const close = () => {
+    setCategory("trips");
+    setCustomTitle("");
+    setBody("");
+    setTouched(false);
+    onDone();
+  };
+
+  const onError = (err: unknown) => {
+    Alert.alert(t("somethingWrong"), err instanceof Error ? err.message : t("somethingWrong"));
+  };
+
+  const submit = () => {
+    setTouched(true);
+    if (!title.trim() || !body.trim()) return;
+    sendAnnouncement.mutate({ title, body, category }, { onSuccess: close, onError });
+  };
+
+  const categoryOptions: { key: AnnouncementCategory; label: string }[] = [
+    { key: "trips", label: t("trips") },
+    { key: "occasions", label: t("occasions") },
+    { key: "custom", label: t("custom") },
+  ];
+
+  return (
+    <AppSheet
+      title={t("sendAnnouncement")}
+      onClose={close}
+      footer={
+        <>
+          <View style={{ flex: 1 }}>
+            <Button title={t("cancel")} variant="outline" onPress={close} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <SubmitButton title={t("send")} loading={sendAnnouncement.isPending} onPress={submit} />
+          </View>
+        </>
+      }
+    >
+      <View style={{ gap: spacing.sm }}>
+        <Text variant="caption" weight="500" tone="muted">
+          {t("category")}
+        </Text>
+        {categoryOptions.map((opt) => (
+          <OptionRow
+            key={opt.key}
+            label={opt.label}
+            state={category === opt.key ? "selected" : "idle"}
+            onPress={() => setCategory(opt.key)}
+          />
+        ))}
+      </View>
+
+      {category === "custom" ? (
+        <Input
+          label={t("title")}
+          value={customTitle}
+          onChangeText={setCustomTitle}
+          error={touched && !customTitle.trim() ? t("required") : undefined}
+        />
+      ) : null}
+      <TextArea
+        label={t("body")}
+        value={body}
+        onChangeText={setBody}
+        error={touched && !body.trim() ? t("required") : undefined}
+      />
     </AppSheet>
   );
 }

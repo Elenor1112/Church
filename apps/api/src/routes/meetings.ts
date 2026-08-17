@@ -9,14 +9,15 @@ import {
   formatTime12h,
 } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireApproved, requireRole } from "../middleware/auth";
 import { resolveAudienceMemberIds } from "../services/absences";
+import { fanOutNotifications } from "../services/notify";
 import type { AppEnv } from "../lib/context";
 import type { Meeting } from "@church/shared";
 
 export const meetingRoutes = new Hono<AppEnv>();
 
-meetingRoutes.use("*", requireAuth);
+meetingRoutes.use("*", requireAuth, requireApproved);
 
 const serialize = (m: typeof meetings.$inferSelect): Meeting => ({
   id: m.id,
@@ -62,16 +63,11 @@ meetingRoutes.post("/", requireRole("super_admin"), async (c) => {
   try {
     const when = `${meetingDayLabel(created!.meetingDate, created!.dayOfWeek)} · ${formatTime12h(created!.startTime)} – ${formatTime12h(created!.endTime)}`;
     const recipientIds = await resolveAudienceMemberIds("all");
-    if (recipientIds.length > 0) {
-      await db.insert(notifications).values(
-        recipientIds.map((memberId) => ({
-          userId: memberId,
-          title: created!.name,
-          message: `New meeting scheduled: ${when}`,
-          type: "generic" as const,
-        })),
-      );
-    }
+    await fanOutNotifications(recipientIds, {
+      title: created!.name,
+      message: `New meeting scheduled: ${when}`,
+      type: "generic",
+    });
   } catch (err) {
     console.error("Failed to send meeting notifications:", err);
   }

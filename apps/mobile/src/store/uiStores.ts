@@ -23,6 +23,17 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   markSeen: () => set({ lastSeenAt: Date.now() }),
 }));
 
+/** Polls & Trivia tab badge: track when the member last visited the tab. */
+interface PollsState {
+  lastSeenAt: number | null;
+  markSeen: () => void;
+}
+
+export const usePollsStore = create<PollsState>((set) => ({
+  lastSeenAt: null,
+  markSeen: () => set({ lastSeenAt: Date.now() }),
+}));
+
 /** Member directory filters used by admin/super-admin screens. */
 interface MemberFilterState {
   query: string;

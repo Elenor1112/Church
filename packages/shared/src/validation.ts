@@ -30,6 +30,29 @@ export const birthdaySchema = z
 
 export const emailSchema = z.string().trim().email("Enter a valid email");
 
+/**
+ * Profile image: either an https URL or an inline base64 image data URL (which
+ * is what the mobile picker produces).
+ *
+ * `z.string().url()` is NOT sufficient here — it accepts any scheme, including
+ * `javascript:`. Size is capped because the value is stored in a text column and
+ * echoed back in list responses; an uncapped data URL is both a storage and a
+ * payload-size problem.
+ */
+/** ~700 KB of base64 ≈ a 512 KB image, comfortably above a cropped avatar. */
+export const MAX_PROFILE_IMAGE_CHARS = 700_000;
+
+const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp|heic|heif);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+export const profileImageSchema = z
+  .string()
+  .trim()
+  .max(MAX_PROFILE_IMAGE_CHARS, "Image is too large — please choose a smaller photo")
+  .refine(
+    (v) => IMAGE_DATA_URL.test(v) || /^https:\/\/\S+$/i.test(v),
+    "Image must be an https URL or an image data URL",
+  );
+
 export const registerSchema = z.object({
   firstName: z.string().trim().min(1, "Required").max(80),
   lastName: z.string().trim().min(1, "Required").max(80),
@@ -74,13 +97,20 @@ export const updateUserSchema = z.object({
   birthday: birthdaySchema.optional(),
   spousePhone: phoneSchema.nullable().optional(),
   email: emailSchema.nullable().optional(),
-  profileImage: z.string().url().nullable().optional(),
-  role: z.enum(ROLES).optional(),
-  status: z.enum(USER_STATUSES).optional(),
-  password: passwordSchema.optional(),
+  profileImage: profileImageSchema.nullable().optional(),
   permissions: adminPermissionsSchema.optional(),
 });
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+
+/**
+ * Self-service profile update (PATCH /users/me). Adds `password` — a user may
+ * change their OWN password. Admins deliberately cannot change someone else's
+ * (see updateUserSchema), which would otherwise allow account takeover.
+ */
+export const updateOwnProfileSchema = updateUserSchema.extend({
+  password: passwordSchema.optional(),
+});
+export type UpdateOwnProfileInput = z.infer<typeof updateOwnProfileSchema>;
 
 export const updateStatusSchema = z.object({
   status: z.enum(USER_STATUSES),
@@ -193,6 +223,37 @@ export const triviaAnswerSchema = z.object({
   chosenIndex: z.number().int().min(0),
 });
 export type TriviaAnswerInput = z.infer<typeof triviaAnswerSchema>;
+
+// ---------------------------------------------------------------------------
+// Spin wheel
+// ---------------------------------------------------------------------------
+/** Bounds on segment count: below 2 there is nothing to spin for; above 12 the
+ *  slices get too thin to read on a phone. */
+export const WHEEL_MIN_SEGMENTS = 2;
+export const WHEEL_MAX_SEGMENTS = 12;
+
+export const wheelSegmentSchema = z.object({
+  label: z.string().trim().min(1, "Required").max(200),
+  /** "#RGB", "#RRGGBB" or "#RRGGBBAA". */
+  color: z
+    .string()
+    .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Invalid color")
+    .optional(),
+  weight: z.number().int().min(1).max(1000).default(1),
+});
+export type WheelSegmentInput = z.infer<typeof wheelSegmentSchema>;
+
+export const createWheelSchema = z.object({
+  title: z.string().trim().min(1, "Required").max(200),
+  description: z.string().trim().max(1000).optional(),
+  segments: z
+    .array(wheelSegmentSchema)
+    .min(WHEEL_MIN_SEGMENTS, `At least ${WHEEL_MIN_SEGMENTS} segments required`)
+    .max(WHEEL_MAX_SEGMENTS, `Maximum ${WHEEL_MAX_SEGMENTS} segments`),
+  onePerMember: z.boolean().default(true),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
+});
+export type CreateWheelInput = z.infer<typeof createWheelSchema>;
 
 // ---------------------------------------------------------------------------
 // Meetings (super admin)

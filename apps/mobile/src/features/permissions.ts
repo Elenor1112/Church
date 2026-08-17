@@ -16,6 +16,7 @@ export function usePermissions() {
   const isSuper = user?.role === "super_admin";
   return {
     canScan: isSuper || (permissions?.can_scan ?? false),
+    canScanAdmins: isSuper || (permissions?.can_scan_admins ?? false),
     canViewLogs: isSuper || (permissions?.can_view_logs ?? false),
     canSendMessages: isSuper || (permissions?.can_send_messages ?? false),
     canGenerateReports: isSuper || (permissions?.can_generate_reports ?? false),

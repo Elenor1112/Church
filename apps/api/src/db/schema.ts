@@ -20,6 +20,10 @@ export const categorySlugEnum = pgEnum("category_slug", [
   "bible",
   "spirituality",
   "saints_lives",
+  "category_a",
+  "category_b",
+  "category_c",
+  "category_d",
   "free",
 ]);
 export const announcementCategoryEnum = pgEnum("announcement_category", [
@@ -64,6 +68,13 @@ export const users = pgTable(
     status: userStatusEnum("status").notNull().default("pending"),
     completedSets: integer("completed_sets").notNull().default(0),
     pushToken: text("push_token"),
+    /**
+     * Bumped whenever role, status, or permissions change. Tokens carry the
+     * value they were issued with; a mismatch means the session predates a
+     * privilege change and is rejected. This is what makes revocation possible
+     * without a token blocklist.
+     */
+    tokenVersion: integer("token_version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -103,7 +114,7 @@ export const qrCodes = pgTable("qr_codes", {
 });
 
 // ---------------------------------------------------------------------------
-// friday_categories (seeded with 4 fixed categories)
+// friday_categories (seeded from FRIDAY_CATEGORIES in @church/shared)
 // ---------------------------------------------------------------------------
 export const fridayCategories = pgTable("friday_categories", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -165,7 +176,7 @@ export const memberCategoryProgress = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// sets — completed sets (all 4 categories done)
+// sets — completed sets (all set-counting categories done; see SET_SIZE)
 // ---------------------------------------------------------------------------
 export const sets = pgTable("sets", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -336,6 +347,58 @@ export const triviaAnswers = pgTable(
   },
   (t) => ({
     uniqMemberQuestion: unique("trivia_answers_member_question_uniq").on(t.memberId, t.questionId),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// wheels + wheel_segments + wheel_spins
+// An admin builds a wheel out of segments; a member spins it once. The server
+// picks the landing segment (weighted) and stores it — the app only animates to
+// the result it is told, so a spin cannot be re-rolled client-side.
+// ---------------------------------------------------------------------------
+export const wheels = pgTable("wheels", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: varchar("title", { length: 200 }).notNull(),
+  description: text("description"),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  isActive: boolean("is_active").notNull().default(true),
+  /** When false, a member may spin repeatedly; the latest spin is their result. */
+  onePerMember: boolean("one_per_member").notNull().default(true),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const wheelSegments = pgTable("wheel_segments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  wheelId: uuid("wheel_id")
+    .notNull()
+    .references(() => wheels.id, { onDelete: "cascade" }),
+  label: varchar("label", { length: 200 }).notNull(),
+  /** Optional hex fill, e.g. "#C8A24A". Null = the app picks from its palette. */
+  color: varchar("color", { length: 9 }),
+  /** Relative odds of landing here. Equal weights = a fair wheel. */
+  weight: integer("weight").notNull().default(1),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const wheelSpins = pgTable(
+  "wheel_spins",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    wheelId: uuid("wheel_id")
+      .notNull()
+      .references(() => wheels.id, { onDelete: "cascade" }),
+    segmentId: uuid("segment_id")
+      .notNull()
+      .references(() => wheelSegments.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    spunAt: timestamp("spun_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    wheelIdx: index("wheel_spins_wheel_idx").on(t.wheelId),
+    memberIdx: index("wheel_spins_member_idx").on(t.memberId),
   }),
 );
 

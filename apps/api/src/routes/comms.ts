@@ -4,7 +4,7 @@ import { db } from "../db/index";
 import { absences, users } from "../db/schema";
 import { createAbsenceSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requirePermission } from "../middleware/auth";
+import { requireAuth, requireApproved, requirePermission } from "../middleware/auth";
 import {
   getAbsentMembers,
   getPausedMembers,
@@ -16,7 +16,7 @@ import type { AbsenceItem } from "@church/shared";
 
 export const commsRoutes = new Hono<AppEnv>();
 
-commsRoutes.use("*", requireAuth);
+commsRoutes.use("*", requireAuth, requireApproved);
 
 /**
  * Birthdays in the last 7 days — derived live from the `users.birthday` column,

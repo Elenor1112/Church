@@ -55,6 +55,44 @@ export interface SetProgress {
   pendingRewardSetId: string | null;
 }
 
+/**
+ * One row of the member's own attendance history, per Friday category. Unlike
+ * `CategoryProgress` (which only says whether the CURRENT set has that category
+ * ticked), this carries the all-time count so the member can see how many
+ * Fridays they attended in each category across every set.
+ */
+export interface CategoryAttendanceDetail {
+  slug: CategorySlug;
+  labelAr: string;
+  labelEn: string;
+  /** Fridays attended in this category, all-time (across every set). */
+  attendedCount: number;
+  /** Whether this category is already ticked in the current, in-progress set. */
+  completedInCurrentSet: boolean;
+  /** Most recent attendance date in this category (YYYY-MM-DD), null if never. */
+  lastAttendedDate: string | null;
+  /** True for categories that never count toward a set (e.g. "free"). */
+  countsTowardSet: boolean;
+}
+
+/** The member's full progress breakdown, shown when they tap Current Set. */
+export interface ProgressDetail {
+  /** Categories in a set (excludes "free"), in display order. */
+  categories: CategoryAttendanceDetail[];
+  /** Non-set categories (e.g. "free") attended at least once — extras. */
+  extraCategories: CategoryAttendanceDetail[];
+  /** Categories ticked in the current set. */
+  completedCount: number;
+  /** Categories needed to finish a set (SET_SIZE). */
+  total: number;
+  /** All-time attendance across every category, including non-set ones. */
+  totalAttendance: number;
+  /** Sets the member has fully completed and had rewarded. */
+  completedSets: number;
+  /** Set awaiting reward delivery, if any. */
+  pendingRewardSetId: string | null;
+}
+
 export interface AttendanceRecord {
   id: string;
   memberId: string;
@@ -216,6 +254,54 @@ export interface TriviaAdminQuestionItem extends Omit<TriviaQuestionItem, "corre
 export interface TriviaAdminItem extends Omit<TriviaItem, "questions"> {
   createdBy: string | null;
   questions: TriviaAdminQuestionItem[];
+}
+
+// ---------------------------------------------------------------------------
+// Spin wheel
+// ---------------------------------------------------------------------------
+/** One slice of the wheel. `weight` is admin-only — members see a fair-looking wheel. */
+export interface WheelSegment {
+  id: string;
+  label: string;
+  /** Hex fill chosen by the admin, or null to let the app pick from its palette. */
+  color: string | null;
+  sortOrder: number;
+}
+
+export interface WheelSegmentAdmin extends WheelSegment {
+  /** Relative odds of landing on this segment. */
+  weight: number;
+  /** How many members have landed here so far. */
+  spinCount: number;
+}
+
+export interface WheelItem {
+  id: string;
+  title: string;
+  description: string | null;
+  isActive: boolean;
+  /** When true, a member gets a single spin and keeps that result. */
+  onePerMember: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+  segments: WheelSegment[];
+  /** This member's own spin result, or null if they have not spun yet. */
+  mySpin: WheelSpinResult | null;
+}
+
+export interface WheelAdminItem extends Omit<WheelItem, "segments" | "mySpin"> {
+  createdBy: string | null;
+  segments: WheelSegmentAdmin[];
+  totalSpins: number;
+}
+
+/** What the server returns when a member spins — the app animates to `index`. */
+export interface WheelSpinResult {
+  segmentId: string;
+  label: string;
+  /** Position of the winning segment within the wheel's ordered segment list. */
+  index: number;
+  spunAt: string;
 }
 
 // ---------------------------------------------------------------------------

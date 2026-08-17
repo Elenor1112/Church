@@ -33,10 +33,18 @@ export function useControlledOverlay(
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
+  // True from close() until the exit animation has removed the instance. While
+  // closing, the outgoing overlay must keep rendering the content it opened
+  // with — re-reading `renderRef` would repaint it with the NEXT overlay's
+  // content if the caller reopens within the exit window.
+  const closingRef = useRef(false);
+
   useEffect(() => {
     if (isOpen && idRef.current == null) {
-      idRef.current = open((api) => renderRef.current(api), optionsRef.current);
+      closingRef.current = false;
+      idRef.current = open((api) => (closingRef.current ? null : renderRef.current(api)), optionsRef.current);
     } else if (!isOpen && idRef.current != null) {
+      closingRef.current = true;
       close(idRef.current);
       idRef.current = null;
     }
@@ -46,6 +54,7 @@ export function useControlledOverlay(
   useEffect(() => {
     return () => {
       if (idRef.current != null) {
+        closingRef.current = true;
         close(idRef.current);
         idRef.current = null;
       }

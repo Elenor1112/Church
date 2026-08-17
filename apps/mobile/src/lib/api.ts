@@ -78,6 +78,17 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const payload = isJson ? await res.json().catch(() => null) : await res.text();
 
+  // A successful response that isn't JSON means we're talking to something that
+  // is not this API — most often API_URL points at the Expo web build, which
+  // answers every path with its HTML index at 200. Without this guard the HTML
+  // string is returned cast to T and blows up far away from the real cause.
+  if (res.ok && !isJson) {
+    throw new ApiError(
+      res.status,
+      `Expected JSON from ${API_URL}${path} but got ${res.headers.get("content-type") ?? "no content-type"}. Check that EXPO_PUBLIC_API_URL points at the API, not the app.`,
+    );
+  }
+
   // A 401 only means "session expired" when we actually sent a token and the
   // server rejected it. A 401 on an unauthenticated request (e.g. login) is a
   // credentials error — surface the server's message and do NOT sign out.

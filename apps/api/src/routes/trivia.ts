@@ -4,7 +4,8 @@ import { db } from "../db/index";
 import { trivia, triviaQuestions, triviaAnswers, notifications, users } from "../db/schema";
 import { createTriviaSchema, triviaAnswerSchema, toggleActiveSchema } from "@church/shared";
 import { parseBody } from "../lib/validate";
-import { requireAuth, requirePermission } from "../middleware/auth";
+import { requireAuth, requireApproved, requirePermission } from "../middleware/auth";
+import { fanOutNotifications } from "../services/notify";
 import type { AppEnv } from "../lib/context";
 import type {
   TriviaItem,
@@ -15,7 +16,7 @@ import type {
 
 export const triviaRoutes = new Hono<AppEnv>();
 
-triviaRoutes.use("*", requireAuth);
+triviaRoutes.use("*", requireAuth, requireApproved);
 
 type QuestionRow = typeof triviaQuestions.$inferSelect;
 type AnswerRow = typeof triviaAnswers.$inferSelect;
@@ -210,16 +211,10 @@ triviaRoutes.post("/", requirePermission("can_send_messages"), async (c) => {
     .from(users)
     .where(and(eq(users.role, "member"), eq(users.status, "approved")));
 
-  if (members.length > 0) {
-    await db.insert(notifications).values(
-      members.map((m) => ({
-        userId: m.id,
-        title: "🧠 New Trivia",
-        message: body.title,
-        type: "generic" as const,
-      })),
-    );
-  }
+  await fanOutNotifications(
+    members.map((m) => m.id),
+    { title: "🧠 New Trivia", message: body.title, type: "generic" },
+  );
 
   return c.json({ trivia: { id: created.id } }, 201);
 });
